@@ -15,13 +15,13 @@ import (
 var migrationFiles embed.FS
 
 func Migrate(ctx context.Context, connection *pgx.Conn) error {
-	if _, err := connection.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version bigint PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
-		return fmt.Errorf("create migration history: %w", err)
-	}
 	if _, err := connection.Exec(ctx, `SELECT pg_advisory_lock(384729104)`); err != nil {
 		return fmt.Errorf("lock migrations: %w", err)
 	}
 	defer connection.Exec(context.Background(), `SELECT pg_advisory_unlock(384729104)`) //nolint:errcheck
+	if _, err := connection.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version bigint PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
+		return fmt.Errorf("create migration history: %w", err)
+	}
 
 	entries, err := migrationFiles.ReadDir("migrations")
 	if err != nil {

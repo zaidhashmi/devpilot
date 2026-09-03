@@ -74,7 +74,7 @@ scripts/                  Development checks
 
 ## Local development
 
-Prerequisites: Go 1.23+, Python 3.12+, Node.js 22+, npm, and Docker Compose.
+Prerequisites: Go 1.26+, Python 3.12+, Node.js 22+, npm, and Docker Compose.
 
 ```bash
 cp .env.example .env

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devpilot.dev/contracts/agent-job.schema.json",
+  "title": "AgentJob",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "job_id", "idempotency_key", "organization_id", "task_run_id", "agent_run_id", "role", "issued_at", "deadline", "input_artifacts", "policy"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "job_id": { "type": "string", "minLength": 1 },
+    "idempotency_key": { "type": "string", "minLength": 1 },
+    "organization_id": { "type": "string", "minLength": 1 },
+    "task_run_id": { "type": "string", "minLength": 1 },
+    "agent_run_id": { "type": "string", "minLength": 1 },
+    "role": { "type": "string", "enum": ["repository_analysis", "planning", "implementation", "testing", "security_review", "code_review"] },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "deadline": { "type": "string", "format": "date-time" },
+    "input_artifacts": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/artifactReference" } },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_attempts", "requires_sandbox"],
+      "properties": {
+        "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "requires_sandbox": { "type": "boolean" },
+        "tool_names": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    }
+  }
+}

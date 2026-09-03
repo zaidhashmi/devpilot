@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devpilot.dev/contracts/common.schema.json",
+  "title": "DevPilot common contract types",
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "kind", "sha256"],
+      "properties": {
+        "artifact_id": { "$ref": "#/$defs/identifier" },
+        "kind": { "type": "string", "enum": ["plan", "log", "diff", "test_report", "review_report", "other"] },
+        "media_type": { "type": "string", "maxLength": 255 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "download_url": { "type": "string", "format": "uri" },
+        "expires_at": { "$ref": "#/$defs/timestamp" }
+      }
+    }
+  }
+}

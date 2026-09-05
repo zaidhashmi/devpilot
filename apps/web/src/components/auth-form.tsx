@@ -26,7 +26,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   }
 
   return (
-    <form className="mt-8 space-y-5" onSubmit={submit}>
+    <form className="mt-8 space-y-5" method="post" onSubmit={submit}>
       {mode === "register" && <>
         <Field label="Display name" name="display_name" autoComplete="name" />
         <Field label="Organization name" name="organization_name" autoComplete="organization" />

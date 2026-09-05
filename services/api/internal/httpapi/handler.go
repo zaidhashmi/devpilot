@@ -30,16 +30,23 @@ type contextKey string
 const requestIDKey contextKey = "request_id"
 
 type Handler struct {
-	logger        *slog.Logger
-	db            *pgxpool.Pool
-	platform      *platform.Service
-	cookieSecure  bool
-	allowedOrigin string
-	loginLimiter  *rateLimiter
+	logger              *slog.Logger
+	db                  *pgxpool.Pool
+	platform            *platform.Service
+	cookieSecure        bool
+	allowedOrigin       string
+	loginLimiter        *rateLimiter
+	githubEnabled       bool
+	githubAppSlug       string
+	githubWebhookSecret string
 }
 
 func New(logger *slog.Logger, db *pgxpool.Pool, service *platform.Service, cookieSecure bool, allowedOrigin string) http.Handler {
-	h := &Handler{logger: logger, db: db, platform: service, cookieSecure: cookieSecure, allowedOrigin: allowedOrigin, loginLimiter: newRateLimiter(10, time.Minute)}
+	return NewWithGitHub(logger, db, service, cookieSecure, allowedOrigin, false, "", "")
+}
+
+func NewWithGitHub(logger *slog.Logger, db *pgxpool.Pool, service *platform.Service, cookieSecure bool, allowedOrigin string, githubEnabled bool, githubAppSlug, webhookSecret string) http.Handler {
+	h := &Handler{logger: logger, db: db, platform: service, cookieSecure: cookieSecure, allowedOrigin: allowedOrigin, loginLimiter: newRateLimiter(10, time.Minute), githubEnabled: githubEnabled, githubAppSlug: githubAppSlug, githubWebhookSecret: webhookSecret}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /readyz", h.ready)
@@ -50,6 +57,13 @@ func New(logger *slog.Logger, db *pgxpool.Pool, service *platform.Service, cooki
 	mux.HandleFunc("GET /api/v1/organization", h.organization)
 	mux.HandleFunc("PATCH /api/v1/organization", h.updateOrganization)
 	mux.HandleFunc("GET /api/v1/organization/members", h.members)
+	mux.HandleFunc("GET /api/v1/integrations/github", h.githubIntegration)
+	mux.HandleFunc("GET /api/v1/integrations/github/install", h.githubInstall)
+	mux.HandleFunc("GET /api/v1/integrations/github/callback", h.githubCallback)
+	mux.HandleFunc("POST /api/v1/integrations/github/sync", h.githubSync)
+	mux.HandleFunc("DELETE /api/v1/integrations/github", h.githubDisconnect)
+	mux.HandleFunc("POST /api/v1/integrations/github/webhook", h.githubWebhook)
+	mux.HandleFunc("GET /api/v1/repositories", h.repositories)
 	return h.requestContext(mux)
 }
 

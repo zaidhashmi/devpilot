@@ -12,12 +12,15 @@ const (
 	OrganizationManage Permission = "organization.manage"
 	MembersRead        Permission = "members.read"
 	MembersManage      Permission = "members.manage"
+	GitHubRead         Permission = "github.read"
+	GitHubManage       Permission = "github.manage"
+	RepositoriesRead   Permission = "repositories.read"
 )
 
 var grants = map[Role]map[Permission]bool{
-	RoleOwner:  {OrganizationRead: true, OrganizationManage: true, MembersRead: true, MembersManage: true},
-	RoleAdmin:  {OrganizationRead: true, OrganizationManage: true, MembersRead: true, MembersManage: true},
-	RoleMember: {OrganizationRead: true, MembersRead: true},
+	RoleOwner:  {OrganizationRead: true, OrganizationManage: true, MembersRead: true, MembersManage: true, GitHubRead: true, GitHubManage: true, RepositoriesRead: true},
+	RoleAdmin:  {OrganizationRead: true, OrganizationManage: true, MembersRead: true, MembersManage: true, GitHubRead: true, GitHubManage: true, RepositoriesRead: true},
+	RoleMember: {OrganizationRead: true, MembersRead: true, GitHubRead: true, RepositoriesRead: true},
 }
 
 func Allowed(role Role, permission Permission) bool {

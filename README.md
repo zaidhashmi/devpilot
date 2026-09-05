@@ -18,6 +18,9 @@ Currently implemented:
 - Organization-aware multi-tenancy
 - Local password authentication and secure server-side sessions
 - Organization-scoped authorization and durable audit events
+- GitHub App installation lifecycle and cryptographically bound setup flow
+- Verified, idempotent GitHub webhooks and on-demand repository synchronization
+- Organization-isolated repository metadata catalog, including private repositories explicitly granted to the App
 - GitHub Actions CI and a Docker Compose development environment
 
 ## Planned workflow
@@ -43,12 +46,15 @@ This workflow is planned and is not represented as working functionality today.
 flowchart TD
     Web[Next.js Web] --> API[Go Platform API]
     API --> PostgreSQL[(PostgreSQL)]
+    API --> GitHubApp[GitHub App API]
     API -. planned jobs .-> Runtime[Python Agent Runtime]
     Runtime -. planned execution .-> Sandbox[Isolated Sandbox]
     Sandbox -. planned changes .-> GitHub[GitHub]
 ```
 
 The Go API owns platform policy and durable state. PostgreSQL is the system of record. Redis is available for future ephemeral coordination only. The Python runtime is reserved for bounded agent orchestration and does not own platform persistence.
+
+GitHub access uses a least-privilege GitHub App with read-only repository metadata permission. App JWTs and short-lived installation tokens exist only in Go process memory and are never persisted or exposed to the browser.
 
 ## Technology
 
@@ -101,6 +107,8 @@ make api-integration-test
 
 Development defaults in `.env.example` are local placeholders only. Do not use them in production.
 
+To exercise repository discovery, configure a development GitHub App with read-only repository metadata access, enable **Request user authorization (OAuth) during installation**, set its first callback URL to `/api/v1/integrations/github/callback`, and set its webhook URL to `/api/v1/integrations/github/webhook`. Provide the App client ID and client secret along with the App ID, private key, and webhook secret. Set `DEVPILOT_GITHUB_ENABLED=true` and replace every GitHub placeholder locally. Never commit credentials.
+
 ## Security philosophy
 
 DevPilot is designed around human approval, server-enforced tenant isolation, audited privileged mutations, opaque server-side sessions, and least-privilege integrations. Future repository code will run only in ephemeral, resource-bounded isolated environments—not on the platform or agent-runtime hosts.
@@ -109,7 +117,6 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 
 ## Roadmap
 
-- GitHub App integration and repository catalog
 - Repository analysis and implementation planning
 - Human approval workflows
 - Isolated execution environments

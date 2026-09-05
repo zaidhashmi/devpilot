@@ -54,11 +54,11 @@ func (h *Handler) githubCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	installationID, err := strconv.ParseInt(r.URL.Query().Get("installation_id"), 10, 64)
-	if err != nil || installationID <= 0 || r.URL.Query().Get("state") == "" {
+	if err != nil || installationID <= 0 || r.URL.Query().Get("state") == "" || r.URL.Query().Get("code") == "" {
 		writeError(w, http.StatusBadRequest, "invalid_callback", "GitHub callback parameters are invalid", requestID(r))
 		return
 	}
-	_, err = h.platform.CompleteGitHubInstallation(r.Context(), actor, r.URL.Query().Get("state"), installationID, requestID(r))
+	_, err = h.platform.CompleteGitHubInstallation(r.Context(), actor, r.URL.Query().Get("state"), r.URL.Query().Get("code"), installationID, requestID(r))
 	if err != nil {
 		h.platformError(w, r, err)
 		return

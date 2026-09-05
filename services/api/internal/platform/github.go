@@ -35,7 +35,7 @@ func (s *Service) BeginGitHubInstallation(ctx context.Context, actor Actor) (str
 	return token, nil
 }
 
-func (s *Service) CompleteGitHubInstallation(ctx context.Context, actor Actor, state string, githubInstallationID int64, requestID string) (GitHubInstallation, error) {
+func (s *Service) CompleteGitHubInstallation(ctx context.Context, actor Actor, state, authorizationCode string, githubInstallationID int64, requestID string) (GitHubInstallation, error) {
 	if !authz.Allowed(actor.Membership.Role, authz.GitHubManage) {
 		return GitHubInstallation{}, ErrForbidden
 	}
@@ -43,24 +43,37 @@ func (s *Service) CompleteGitHubInstallation(ctx context.Context, actor Actor, s
 		return GitHubInstallation{}, ErrUnavailable
 	}
 	hash := sha256.Sum256([]byte(state))
-	var stateID, organizationID, userID string
-	err := s.db.QueryRow(ctx, `SELECT id,organization_id,initiating_user_id FROM github_installation_states WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now()`, hash[:]).Scan(&stateID, &organizationID, &userID)
-	if err != nil || organizationID != actor.Organization.ID || userID != actor.User.ID {
-		return GitHubInstallation{}, ErrForbidden
-	}
-	metadata, err := s.github.GetInstallation(ctx, githubInstallationID)
-	if err != nil {
-		return GitHubInstallation{}, err
-	}
-	repositories, err := s.github.ListRepositories(ctx, githubInstallationID)
-	if err != nil {
-		return GitHubInstallation{}, err
-	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return GitHubInstallation{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	var stateID, organizationID, userID string
+	err = tx.QueryRow(ctx, `SELECT id,organization_id,initiating_user_id FROM github_installation_states WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now() FOR UPDATE`, hash[:]).Scan(&stateID, &organizationID, &userID)
+	if err != nil || organizationID != actor.Organization.ID || userID != actor.User.ID {
+		return GitHubInstallation{}, ErrForbidden
+	}
+	userToken, err := s.github.ExchangeUserCode(ctx, authorizationCode)
+	if err != nil {
+		return GitHubInstallation{}, s.bindingVerificationFailure(ctx, tx, stateID, err)
+	}
+	// The user token is intentionally scoped to this verification call chain. It is
+	// never persisted, cached, logged, audited, or used for repository operations.
+	userInstallation, err := s.github.GetUserInstallation(ctx, userToken, githubInstallationID)
+	if err != nil {
+		return GitHubInstallation{}, s.bindingVerificationFailure(ctx, tx, stateID, err)
+	}
+	metadata, err := s.github.GetInstallation(ctx, githubInstallationID)
+	if err != nil {
+		return GitHubInstallation{}, s.bindingVerificationFailure(ctx, tx, stateID, err)
+	}
+	if userInstallation.ID != metadata.ID || userInstallation.AccountID != metadata.AccountID {
+		return GitHubInstallation{}, s.consumeRejectedBinding(ctx, tx, stateID)
+	}
+	repositories, err := s.github.ListRepositories(ctx, githubInstallationID)
+	if err != nil {
+		return GitHubInstallation{}, err
+	}
 	tag, err := tx.Exec(ctx, `UPDATE github_installation_states SET consumed_at=now() WHERE id=$1 AND consumed_at IS NULL`, stateID)
 	if err != nil || tag.RowsAffected() != 1 {
 		return GitHubInstallation{}, ErrForbidden
@@ -93,6 +106,25 @@ func (s *Service) CompleteGitHubInstallation(ctx context.Context, actor Actor, s
 		return GitHubInstallation{}, err
 	}
 	return result, nil
+}
+
+func (s *Service) bindingVerificationFailure(ctx context.Context, tx pgx.Tx, stateID string, err error) error {
+	if errors.Is(err, githubapp.ErrUnauthorized) || errors.Is(err, githubapp.ErrForbidden) || errors.Is(err, githubapp.ErrNotFound) {
+		return s.consumeRejectedBinding(ctx, tx, stateID)
+	}
+	// Transient GitHub and rate-limit failures roll the transaction back, preserving
+	// the state for a legitimate retry while the row lock prevents concurrent use.
+	return err
+}
+
+func (s *Service) consumeRejectedBinding(ctx context.Context, tx pgx.Tx, stateID string) error {
+	if _, err := tx.Exec(ctx, `UPDATE github_installation_states SET consumed_at=now() WHERE id=$1 AND consumed_at IS NULL`, stateID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return ErrForbidden
 }
 
 func (s *Service) GitHubInstallation(ctx context.Context, actor Actor) (*GitHubInstallation, error) {
@@ -166,17 +198,27 @@ func (s *Service) DisconnectGitHub(ctx context.Context, actor Actor, requestID s
 	if !authz.Allowed(actor.Membership.Role, authz.GitHubManage) {
 		return ErrForbidden
 	}
+	var id string
+	var externalID int64
+	err := s.db.QueryRow(ctx, `SELECT id,github_installation_id FROM github_installations WHERE organization_id=$1 AND status<>'removed'`, actor.Organization.ID).Scan(&id, &externalID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if s.github == nil {
+		return ErrUnavailable
+	}
+	if err = s.github.DeleteInstallation(ctx, externalID); err != nil && !errors.Is(err, githubapp.ErrNotFound) {
+		return err
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	var id string
-	err = tx.QueryRow(ctx, `UPDATE github_installations SET status='removed',suspended_at=NULL,updated_at=now() WHERE organization_id=$1 AND status<>'removed' RETURNING id`, actor.Organization.ID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE github_installations SET status='removed',suspended_at=NULL,updated_at=now() WHERE id=$1`, id); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE repositories SET available=false,updated_at=now() WHERE github_installation_id=$1`, id); err != nil {

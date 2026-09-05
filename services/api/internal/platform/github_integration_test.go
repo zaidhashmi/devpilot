@@ -2,7 +2,9 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,16 +12,48 @@ import (
 )
 
 type fakeGitHub struct {
-	installation githubapp.Installation
-	repositories []githubapp.Repository
-	err          error
+	installation     githubapp.Installation
+	userInstallation githubapp.Installation
+	repositories     []githubapp.Repository
+	exchangeErr      error
+	userErr          error
+	getErr           error
+	listErr          error
+	deleteErr        error
+	userToken        string
+	deleted          bool
 }
 
+func (f *fakeGitHub) ExchangeUserCode(context.Context, string) (string, error) {
+	if f.exchangeErr != nil {
+		return "", f.exchangeErr
+	}
+	if f.userToken == "" {
+		return "github-user-token-sensitive", nil
+	}
+	return f.userToken, nil
+}
+func (f *fakeGitHub) GetUserInstallation(_ context.Context, token string, _ int64) (githubapp.Installation, error) {
+	if f.userErr != nil {
+		return githubapp.Installation{}, f.userErr
+	}
+	if token == "" {
+		return githubapp.Installation{}, githubapp.ErrUnauthorized
+	}
+	if f.userInstallation.ID != 0 {
+		return f.userInstallation, nil
+	}
+	return f.installation, nil
+}
 func (f *fakeGitHub) GetInstallation(context.Context, int64) (githubapp.Installation, error) {
-	return f.installation, f.err
+	return f.installation, f.getErr
 }
 func (f *fakeGitHub) ListRepositories(context.Context, int64) ([]githubapp.Repository, error) {
-	return f.repositories, f.err
+	return f.repositories, f.listErr
+}
+func (f *fakeGitHub) DeleteInstallation(context.Context, int64) error {
+	f.deleted = true
+	return f.deleteErr
 }
 
 func TestGitHubIntegrationTenantSafetyAndReconciliation(t *testing.T) {
@@ -39,17 +73,17 @@ func TestGitHubIntegrationTenantSafetyAndReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.CompleteGitHubInstallation(ctx, b.Actor, state, 101, "req-attack"); !errors.Is(err, ErrForbidden) {
+	if _, err = s.CompleteGitHubInstallation(ctx, b.Actor, state, "code", 101, "req-attack"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-tenant callback error=%v", err)
 	}
-	installation, err := s.CompleteGitHubInstallation(ctx, a.Actor, state, 101, "req-connect")
+	installation, err := s.CompleteGitHubInstallation(ctx, a.Actor, state, "code", 101, "req-connect")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if installation.RepositoryCount != 1 {
 		t.Fatalf("repository count=%d", installation.RepositoryCount)
 	}
-	if _, err = s.CompleteGitHubInstallation(ctx, a.Actor, state, 101, "req-replay"); !errors.Is(err, ErrForbidden) {
+	if _, err = s.CompleteGitHubInstallation(ctx, a.Actor, state, "code", 101, "req-replay"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("state replay error=%v", err)
 	}
 	repos, err := s.Repositories(ctx, a.Actor)
@@ -89,6 +123,9 @@ func TestGitHubIntegrationTenantSafetyAndReconciliation(t *testing.T) {
 	if err = s.DisconnectGitHub(ctx, a.Actor, "req-disconnect"); err != nil {
 		t.Fatal(err)
 	}
+	if !fake.deleted {
+		t.Fatal("disconnect did not uninstall the GitHub App")
+	}
 	var available int
 	if err = pool.QueryRow(ctx, `SELECT count(*) FROM repositories WHERE organization_id=$1 AND available`, a.Actor.Organization.ID).Scan(&available); err != nil || available != 0 {
 		t.Fatalf("available=%d err=%v", available, err)
@@ -103,6 +140,100 @@ func TestGitHubIntegrationTenantSafetyAndReconciliation(t *testing.T) {
 	}
 }
 
+func TestGitHubInstallationBindingRequiresUserAuthorization(t *testing.T) {
+	s, pool := integrationService(t)
+	ctx := context.Background()
+	actor, err := s.Register(ctx, registration("binding@example.com", "Binding Org"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := githubapp.Installation{ID: 701, AccountID: 702, AccountLogin: "binding-org", AccountType: "Organization", RepositorySelection: "selected"}
+	fake := &fakeGitHub{installation: base, userInstallation: base, userToken: "github-user-token-sensitive"}
+	s.SetGitHubClient(fake)
+
+	state, _ := s.BeginGitHubInstallation(ctx, actor.Actor)
+	fake.exchangeErr = githubapp.ErrUnauthorized
+	if _, err = s.CompleteGitHubInstallation(ctx, actor.Actor, state, "bad-code", 701, "req-exchange-fail"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("exchange failure=%v", err)
+	}
+	fake.exchangeErr = nil
+	if _, err = s.CompleteGitHubInstallation(ctx, actor.Actor, state, "good-code", 701, "req-consumed"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("definitive failure state replay=%v", err)
+	}
+
+	state, _ = s.BeginGitHubInstallation(ctx, actor.Actor)
+	fake.userErr = githubapp.ErrForbidden
+	if _, err = s.CompleteGitHubInstallation(ctx, actor.Actor, state, "code", 701, "req-user-denied"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unauthorized installation=%v", err)
+	}
+	fake.userErr = nil
+
+	state, _ = s.BeginGitHubInstallation(ctx, actor.Actor)
+	fake.userInstallation = githubapp.Installation{ID: 999, AccountID: 998, AccountLogin: "other-account", AccountType: "Organization", RepositorySelection: "all"}
+	if _, err = s.CompleteGitHubInstallation(ctx, actor.Actor, state, "code", 701, "req-spoof"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("spoofed installation=%v", err)
+	}
+	fake.userInstallation = base
+
+	state, _ = s.BeginGitHubInstallation(ctx, actor.Actor)
+	fake.userErr = githubapp.ErrUnavailable
+	if _, err = s.CompleteGitHubInstallation(ctx, actor.Actor, state, "code", 701, "req-transient"); !errors.Is(err, githubapp.ErrUnavailable) {
+		t.Fatalf("transient verification=%v", err)
+	}
+	fake.userErr = nil
+	if _, err = s.CompleteGitHubInstallation(ctx, actor.Actor, state, "code", 701, "req-retry"); err != nil {
+		t.Fatalf("retry after transient=%v", err)
+	}
+	bound, err := s.GitHubInstallation(ctx, actor.Actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(bound)
+	if err != nil || strings.Contains(string(encoded), "github-user-token-sensitive") {
+		t.Fatalf("user token exposed in response: %s err=%v", encoded, err)
+	}
+
+	var count int
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM github_installations WHERE organization_id=$1`, actor.Actor.Organization.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("bound installations=%d err=%v", count, err)
+	}
+	var leaked bool
+	if err = pool.QueryRow(ctx, `SELECT coalesce(bool_or(metadata::text LIKE '%github-user-token-sensitive%'),false) FROM audit_events`).Scan(&leaked); err != nil || leaked {
+		t.Fatalf("user token audited=%v err=%v", leaked, err)
+	}
+}
+
+func TestGitHubDisconnectRemoteFailureAndNotFound(t *testing.T) {
+	s, pool := integrationService(t)
+	ctx := context.Background()
+	actor, err := s.Register(ctx, registration("disconnect@example.com", "Disconnect Org"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := githubapp.Installation{ID: 801, AccountID: 802, AccountLogin: "disconnect-org", AccountType: "Organization", RepositorySelection: "all"}
+	fake := &fakeGitHub{installation: installation, userInstallation: installation}
+	s.SetGitHubClient(fake)
+	state, _ := s.BeginGitHubInstallation(ctx, actor.Actor)
+	if _, err = s.CompleteGitHubInstallation(ctx, actor.Actor, state, "code", 801, "req-connect"); err != nil {
+		t.Fatal(err)
+	}
+	fake.deleteErr = githubapp.ErrUnavailable
+	if err = s.DisconnectGitHub(ctx, actor.Actor, "req-failed"); !errors.Is(err, githubapp.ErrUnavailable) {
+		t.Fatalf("remote failure=%v", err)
+	}
+	var status string
+	if err = pool.QueryRow(ctx, `SELECT status FROM github_installations WHERE github_installation_id=801`).Scan(&status); err != nil || status != "active" {
+		t.Fatalf("false local disconnect status=%s err=%v", status, err)
+	}
+	fake.deleteErr = githubapp.ErrNotFound
+	if err = s.DisconnectGitHub(ctx, actor.Actor, "req-not-found"); err != nil {
+		t.Fatalf("already uninstalled=%v", err)
+	}
+	if err = pool.QueryRow(ctx, `SELECT status FROM github_installations WHERE github_installation_id=801`).Scan(&status); err != nil || status != "removed" {
+		t.Fatalf("removed status=%s err=%v", status, err)
+	}
+}
+
 func TestGitHubWebhookLifecycleAndIdempotency(t *testing.T) {
 	s, pool := integrationService(t)
 	ctx := context.Background()
@@ -113,7 +244,7 @@ func TestGitHubWebhookLifecycleAndIdempotency(t *testing.T) {
 	fake := &fakeGitHub{installation: githubapp.Installation{ID: 501, AccountID: 502, AccountLogin: "webhook-org", AccountType: "Organization", RepositorySelection: "selected"}}
 	s.SetGitHubClient(fake)
 	state, _ := s.BeginGitHubInstallation(ctx, actor.Actor)
-	if _, err = s.CompleteGitHubInstallation(ctx, actor.Actor, state, 501, "req-connect"); err != nil {
+	if _, err = s.CompleteGitHubInstallation(ctx, actor.Actor, state, "code", 501, "req-connect"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.ProcessGitHubWebhook(ctx, "delivery-retry", "installation", []byte(`{`)); !errors.Is(err, ErrInvalidWebhook) {

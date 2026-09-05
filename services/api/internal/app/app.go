@@ -31,7 +31,7 @@ func (a *App) Run(ctx context.Context) error {
 	defer db.Close()
 	platformService := platform.New(db, a.config.SessionTTL)
 	if a.config.GitHub.Enabled {
-		client, err := githubapp.NewHTTPClient(a.config.GitHub.AppID, a.config.GitHub.PrivateKeyPEM, a.config.GitHub.APIURL, nil)
+		client, err := githubapp.NewHTTPClient(a.config.GitHub.AppID, a.config.GitHub.ClientID, a.config.GitHub.ClientSecret, a.config.GitHub.PrivateKeyPEM, a.config.GitHub.APIURL, a.config.GitHub.OAuthURL, nil)
 		if err != nil {
 			return err
 		}

@@ -25,10 +25,13 @@ type Config struct {
 type GitHubConfig struct {
 	Enabled       bool
 	AppID         string
+	ClientID      string
+	ClientSecret  string
 	AppSlug       string
 	PrivateKeyPEM string
 	WebhookSecret string
 	APIURL        string
+	OAuthURL      string
 }
 
 func Load() (Config, error) {
@@ -45,10 +48,13 @@ func Load() (Config, error) {
 	cfg.GitHub = GitHubConfig{
 		Enabled:       strings.EqualFold(os.Getenv("DEVPILOT_GITHUB_ENABLED"), "true"),
 		AppID:         os.Getenv("DEVPILOT_GITHUB_APP_ID"),
+		ClientID:      os.Getenv("DEVPILOT_GITHUB_CLIENT_ID"),
+		ClientSecret:  os.Getenv("DEVPILOT_GITHUB_CLIENT_SECRET"),
 		AppSlug:       os.Getenv("DEVPILOT_GITHUB_APP_SLUG"),
 		PrivateKeyPEM: strings.ReplaceAll(os.Getenv("DEVPILOT_GITHUB_PRIVATE_KEY"), `\n`, "\n"),
 		WebhookSecret: os.Getenv("DEVPILOT_GITHUB_WEBHOOK_SECRET"),
 		APIURL:        envOrDefault("DEVPILOT_GITHUB_API_URL", "https://api.github.com"),
+		OAuthURL:      envOrDefault("DEVPILOT_GITHUB_OAUTH_URL", "https://github.com"),
 	}
 
 	shutdownTimeout, err := time.ParseDuration(envOrDefault("DEVPILOT_SHUTDOWN_TIMEOUT", "10s"))
@@ -73,8 +79,8 @@ func Load() (Config, error) {
 			return Config{}, errors.New("DEVPILOT_DATABASE_URL is required outside development and test")
 		}
 	}
-	if cfg.GitHub.Enabled && (cfg.GitHub.AppID == "" || cfg.GitHub.AppSlug == "" || cfg.GitHub.PrivateKeyPEM == "" || cfg.GitHub.WebhookSecret == "") {
-		return Config{}, errors.New("GitHub integration requires DEVPILOT_GITHUB_APP_ID, DEVPILOT_GITHUB_APP_SLUG, DEVPILOT_GITHUB_PRIVATE_KEY, and DEVPILOT_GITHUB_WEBHOOK_SECRET")
+	if cfg.GitHub.Enabled && (cfg.GitHub.AppID == "" || cfg.GitHub.ClientID == "" || cfg.GitHub.ClientSecret == "" || cfg.GitHub.AppSlug == "" || cfg.GitHub.PrivateKeyPEM == "" || cfg.GitHub.WebhookSecret == "") {
+		return Config{}, errors.New("GitHub integration requires DEVPILOT_GITHUB_APP_ID, DEVPILOT_GITHUB_CLIENT_ID, DEVPILOT_GITHUB_CLIENT_SECRET, DEVPILOT_GITHUB_APP_SLUG, DEVPILOT_GITHUB_PRIVATE_KEY, and DEVPILOT_GITHUB_WEBHOOK_SECRET")
 	}
 
 	return cfg, nil

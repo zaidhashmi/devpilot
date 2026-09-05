@@ -107,7 +107,7 @@ make api-integration-test
 
 Development defaults in `.env.example` are local placeholders only. Do not use them in production.
 
-To exercise repository discovery, configure a development GitHub App with read-only repository metadata access, an installation setup URL ending in `/api/v1/integrations/github/callback`, and a webhook URL ending in `/api/v1/integrations/github/webhook`. Set `DEVPILOT_GITHUB_ENABLED=true` and replace every GitHub placeholder locally. Never commit the App private key or webhook secret.
+To exercise repository discovery, configure a development GitHub App with read-only repository metadata access, enable **Request user authorization (OAuth) during installation**, set its first callback URL to `/api/v1/integrations/github/callback`, and set its webhook URL to `/api/v1/integrations/github/webhook`. Provide the App client ID and client secret along with the App ID, private key, and webhook secret. Set `DEVPILOT_GITHUB_ENABLED=true` and replace every GitHub placeholder locally. Never commit credentials.
 
 ## Security philosophy
 

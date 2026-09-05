@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -49,19 +50,25 @@ type Installation struct {
 }
 
 type Client interface {
+	ExchangeUserCode(context.Context, string) (string, error)
+	GetUserInstallation(context.Context, string, int64) (Installation, error)
 	GetInstallation(context.Context, int64) (Installation, error)
 	ListRepositories(context.Context, int64) ([]Repository, error)
+	DeleteInstallation(context.Context, int64) error
 }
 
 type HTTPClient struct {
-	appID      string
-	privateKey *rsa.PrivateKey
-	baseURL    string
-	http       *http.Client
-	now        func() time.Time
+	appID        string
+	clientID     string
+	clientSecret string
+	privateKey   *rsa.PrivateKey
+	baseURL      string
+	oauthURL     string
+	http         *http.Client
+	now          func() time.Time
 }
 
-func NewHTTPClient(appID, privateKeyPEM, baseURL string, client *http.Client) (*HTTPClient, error) {
+func NewHTTPClient(appID, clientID, clientSecret, privateKeyPEM, baseURL, oauthURL string, client *http.Client) (*HTTPClient, error) {
 	key, err := parsePrivateKey([]byte(privateKeyPEM))
 	if err != nil {
 		return nil, err
@@ -69,10 +76,66 @@ func NewHTTPClient(appID, privateKeyPEM, baseURL string, client *http.Client) (*
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &HTTPClient{appID: appID, privateKey: key, baseURL: strings.TrimRight(baseURL, "/"), http: client, now: time.Now}, nil
+	return &HTTPClient{appID: appID, clientID: clientID, clientSecret: clientSecret, privateKey: key, baseURL: strings.TrimRight(baseURL, "/"), oauthURL: strings.TrimRight(oauthURL, "/"), http: client, now: time.Now}, nil
+}
+
+func (c *HTTPClient) ExchangeUserCode(ctx context.Context, code string) (string, error) {
+	var payload struct {
+		AccessToken string `json:"access_token"`
+	}
+	form := url.Values{"client_id": {c.clientID}, "client_secret": {c.clientSecret}, "code": {code}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.oauthURL+"/login/oauth/access_token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := c.do(req, &payload); err != nil {
+		return "", err
+	}
+	if payload.AccessToken == "" {
+		return "", ErrUnauthorized
+	}
+	return payload.AccessToken, nil
+}
+
+func (c *HTTPClient) GetUserInstallation(ctx context.Context, token string, id int64) (Installation, error) {
+	for page := 1; ; page++ {
+		var payload struct {
+			Installations []struct {
+				ID      int64 `json:"id"`
+				Account struct {
+					ID    int64  `json:"id"`
+					Login string `json:"login"`
+					Type  string `json:"type"`
+				} `json:"account"`
+				RepositorySelection string `json:"repository_selection"`
+			} `json:"installations"`
+		}
+		path := fmt.Sprintf("/user/installations?per_page=100&page=%d", page)
+		if err := c.request(ctx, http.MethodGet, path, token, nil, &payload); err != nil {
+			return Installation{}, err
+		}
+		for _, candidate := range payload.Installations {
+			if candidate.ID == id {
+				return Installation{ID: candidate.ID, AccountID: candidate.Account.ID, AccountLogin: candidate.Account.Login, AccountType: candidate.Account.Type, RepositorySelection: candidate.RepositorySelection}, nil
+			}
+		}
+		if len(payload.Installations) < 100 {
+			return Installation{}, ErrForbidden
+		}
+	}
 }
 
 func (c *HTTPClient) GetInstallation(ctx context.Context, id int64) (Installation, error) {
+	token, err := c.appJWT()
+	if err != nil {
+		return Installation{}, err
+	}
+	return c.getInstallation(ctx, fmt.Sprintf("/app/installations/%d", id), token)
+}
+
+func (c *HTTPClient) getInstallation(ctx context.Context, path, token string) (Installation, error) {
 	var payload struct {
 		ID      int64 `json:"id"`
 		Account struct {
@@ -82,10 +145,14 @@ func (c *HTTPClient) GetInstallation(ctx context.Context, id int64) (Installatio
 		} `json:"account"`
 		RepositorySelection string `json:"repository_selection"`
 	}
-	if err := c.appRequest(ctx, http.MethodGet, fmt.Sprintf("/app/installations/%d", id), nil, &payload); err != nil {
+	if err := c.request(ctx, http.MethodGet, path, token, nil, &payload); err != nil {
 		return Installation{}, err
 	}
 	return Installation{ID: payload.ID, AccountID: payload.Account.ID, AccountLogin: payload.Account.Login, AccountType: payload.Account.Type, RepositorySelection: payload.RepositorySelection}, nil
+}
+
+func (c *HTTPClient) DeleteInstallation(ctx context.Context, id int64) error {
+	return c.appRequest(ctx, http.MethodDelete, fmt.Sprintf("/app/installations/%d", id), nil, nil)
 }
 
 func (c *HTTPClient) ListRepositories(ctx context.Context, installationID int64) ([]Repository, error) {
@@ -149,6 +216,10 @@ func (c *HTTPClient) appRequest(ctx context.Context, method, path string, body, 
 }
 
 func (c *HTTPClient) request(ctx context.Context, method, path, token string, body, output any) error {
+	return c.requestURL(ctx, method, c.baseURL+path, token, body, output)
+}
+
+func (c *HTTPClient) requestURL(ctx context.Context, method, endpoint, token string, body, output any) error {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -157,16 +228,22 @@ func (c *HTTPClient) request(ctx context.Context, method, path, token string, bo
 		}
 		reader = bytes.NewReader(encoded)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	return c.do(req, output)
+}
+
+func (c *HTTPClient) do(req *http.Request, output any) error {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("github request: %w", err)

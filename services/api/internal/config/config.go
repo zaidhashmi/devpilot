@@ -19,6 +19,16 @@ type Config struct {
 	SessionTTL      time.Duration
 	CookieSecure    bool
 	AllowedOrigin   string
+	GitHub          GitHubConfig
+}
+
+type GitHubConfig struct {
+	Enabled       bool
+	AppID         string
+	AppSlug       string
+	PrivateKeyPEM string
+	WebhookSecret string
+	APIURL        string
 }
 
 func Load() (Config, error) {
@@ -32,6 +42,14 @@ func Load() (Config, error) {
 	}
 	cfg.CookieSecure = environment != "development" && environment != "test"
 	cfg.AllowedOrigin = envOrDefault("DEVPILOT_WEB_ORIGIN", "http://localhost:3000")
+	cfg.GitHub = GitHubConfig{
+		Enabled:       strings.EqualFold(os.Getenv("DEVPILOT_GITHUB_ENABLED"), "true"),
+		AppID:         os.Getenv("DEVPILOT_GITHUB_APP_ID"),
+		AppSlug:       os.Getenv("DEVPILOT_GITHUB_APP_SLUG"),
+		PrivateKeyPEM: strings.ReplaceAll(os.Getenv("DEVPILOT_GITHUB_PRIVATE_KEY"), `\n`, "\n"),
+		WebhookSecret: os.Getenv("DEVPILOT_GITHUB_WEBHOOK_SECRET"),
+		APIURL:        envOrDefault("DEVPILOT_GITHUB_API_URL", "https://api.github.com"),
+	}
 
 	shutdownTimeout, err := time.ParseDuration(envOrDefault("DEVPILOT_SHUTDOWN_TIMEOUT", "10s"))
 	if err != nil || shutdownTimeout <= 0 {
@@ -54,6 +72,9 @@ func Load() (Config, error) {
 		if os.Getenv("DEVPILOT_DATABASE_URL") == "" {
 			return Config{}, errors.New("DEVPILOT_DATABASE_URL is required outside development and test")
 		}
+	}
+	if cfg.GitHub.Enabled && (cfg.GitHub.AppID == "" || cfg.GitHub.AppSlug == "" || cfg.GitHub.PrivateKeyPEM == "" || cfg.GitHub.WebhookSecret == "") {
+		return Config{}, errors.New("GitHub integration requires DEVPILOT_GITHUB_APP_ID, DEVPILOT_GITHUB_APP_SLUG, DEVPILOT_GITHUB_PRIVATE_KEY, and DEVPILOT_GITHUB_WEBHOOK_SECRET")
 	}
 
 	return cfg, nil

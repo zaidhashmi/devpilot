@@ -9,6 +9,7 @@ import (
 
 	"github.com/devpilot/devpilot/services/api/internal/config"
 	"github.com/devpilot/devpilot/services/api/internal/database"
+	"github.com/devpilot/devpilot/services/api/internal/githubapp"
 	"github.com/devpilot/devpilot/services/api/internal/httpapi"
 	"github.com/devpilot/devpilot/services/api/internal/platform"
 )
@@ -29,9 +30,16 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	defer db.Close()
 	platformService := platform.New(db, a.config.SessionTTL)
+	if a.config.GitHub.Enabled {
+		client, err := githubapp.NewHTTPClient(a.config.GitHub.AppID, a.config.GitHub.PrivateKeyPEM, a.config.GitHub.APIURL, nil)
+		if err != nil {
+			return err
+		}
+		platformService.SetGitHubClient(client)
+	}
 	server := &http.Server{
 		Addr:              a.config.Address,
-		Handler:           httpapi.New(a.logger, db, platformService, a.config.CookieSecure, a.config.AllowedOrigin),
+		Handler:           httpapi.NewWithGitHub(a.logger, db, platformService, a.config.CookieSecure, a.config.AllowedOrigin, a.config.GitHub.Enabled, a.config.GitHub.AppSlug, a.config.GitHub.WebhookSecret),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

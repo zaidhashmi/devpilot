@@ -38,3 +38,15 @@ func TestLoadRejectsInvalidTimeout(t *testing.T) {
 		t.Fatal("Load() expected error for invalid timeout")
 	}
 }
+
+func TestLoadRequiresGitHubSecretsWhenEnabled(t *testing.T) {
+	t.Setenv("DEVPILOT_ENV", "test")
+	t.Setenv("DEVPILOT_GITHUB_ENABLED", "true")
+	t.Setenv("DEVPILOT_GITHUB_APP_ID", "123")
+	t.Setenv("DEVPILOT_GITHUB_APP_SLUG", "devpilot-test")
+	t.Setenv("DEVPILOT_GITHUB_PRIVATE_KEY", "")
+	t.Setenv("DEVPILOT_GITHUB_WEBHOOK_SECRET", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected missing GitHub credentials to fail")
+	}
+}

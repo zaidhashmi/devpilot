@@ -13,6 +13,8 @@ var (
 	ErrUnauthenticated    = errors.New("authentication required")
 	ErrForbidden          = errors.New("forbidden")
 	ErrNotFound           = errors.New("not found")
+	ErrUnavailable        = errors.New("integration unavailable")
+	ErrInvalidWebhook     = errors.New("invalid webhook payload")
 )
 
 type User struct {
@@ -66,4 +68,34 @@ type Session struct {
 	Token     string
 	ExpiresAt time.Time
 	Actor     Actor
+}
+
+type GitHubInstallation struct {
+	ID                   string     `json:"id"`
+	GitHubInstallationID int64      `json:"github_installation_id"`
+	GitHubAccountID      int64      `json:"github_account_id"`
+	GitHubAccountLogin   string     `json:"github_account_login"`
+	GitHubAccountType    string     `json:"github_account_type"`
+	RepositorySelection  string     `json:"repository_selection"`
+	Status               string     `json:"status"`
+	SuspendedAt          *time.Time `json:"suspended_at,omitempty"`
+	RepositoryCount      int        `json:"repository_count"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+type Repository struct {
+	ID                 string     `json:"id"`
+	GitHubRepositoryID int64      `json:"github_repository_id"`
+	Owner              string     `json:"owner"`
+	Name               string     `json:"name"`
+	FullName           string     `json:"full_name"`
+	DefaultBranch      string     `json:"default_branch"`
+	Private            bool       `json:"private"`
+	Archived           bool       `json:"archived"`
+	Disabled           bool       `json:"disabled"`
+	Available          bool       `json:"available"`
+	HTMLURL            string     `json:"html_url"`
+	GitHubUpdatedAt    *time.Time `json:"github_updated_at,omitempty"`
+	LastSyncedAt       time.Time  `json:"last_synced_at"`
 }

@@ -12,3 +12,5 @@ Rules:
 - No contract carries database credentials or general-purpose platform credentials.
 
 Schemas are drafts until the first runtime integration and may change incompatibly before a tagged release.
+
+The workspace runner contracts are fixed-function inspection messages, not agent jobs and not an arbitrary command interface. The request contains an ephemeral archive capability that must never be persisted; the result contains sanitized structural metadata only.

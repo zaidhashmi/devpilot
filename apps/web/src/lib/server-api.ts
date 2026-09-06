@@ -2,7 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 
-import type { Actor, GitHubInstallation, Repository } from "@/lib/types";
+import type { Actor, GitHubInstallation, Repository, Workspace } from "@/lib/types";
 
 const apiURL = process.env.DEVPILOT_INTERNAL_API_URL ?? "http://127.0.0.1:8080";
 
@@ -37,3 +37,4 @@ export async function repositories(): Promise<Repository[]> {
   if(!response?.ok)return [];
   return ((await response.json()) as {repositories:Repository[]}).repositories;
 }
+export async function workspace(id:string):Promise<Workspace|null>{const response=await authenticatedFetch(`/api/v1/workspaces/${encodeURIComponent(id)}`);if(!response?.ok)return null;return await response.json() as Workspace;}

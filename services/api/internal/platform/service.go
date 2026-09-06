@@ -14,6 +14,7 @@ import (
 
 	"github.com/devpilot/devpilot/services/api/internal/authz"
 	"github.com/devpilot/devpilot/services/api/internal/githubapp"
+	"github.com/devpilot/devpilot/services/api/internal/runner"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -27,6 +28,7 @@ type Service struct {
 	sessionTTL time.Duration
 	now        func() time.Time
 	github     githubapp.Client
+	runner     runner.Client
 }
 
 func New(db *pgxpool.Pool, sessionTTL time.Duration) *Service {
@@ -34,6 +36,7 @@ func New(db *pgxpool.Pool, sessionTTL time.Duration) *Service {
 }
 
 func (s *Service) SetGitHubClient(client githubapp.Client) { s.github = client }
+func (s *Service) SetRunnerClient(client runner.Client)    { s.runner = client }
 
 func (s *Service) Register(ctx context.Context, input Registration) (Session, error) {
 	normalizedEmail := normalizeEmail(input.Email)

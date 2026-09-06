@@ -12,6 +12,7 @@ import (
 	"github.com/devpilot/devpilot/services/api/internal/githubapp"
 	"github.com/devpilot/devpilot/services/api/internal/httpapi"
 	"github.com/devpilot/devpilot/services/api/internal/platform"
+	"github.com/devpilot/devpilot/services/api/internal/runner"
 )
 
 type App struct {
@@ -30,12 +31,18 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	defer db.Close()
 	platformService := platform.New(db, a.config.SessionTTL)
+	if err := platformService.RecoverInterruptedWorkspaces(ctx); err != nil {
+		return err
+	}
 	if a.config.GitHub.Enabled {
 		client, err := githubapp.NewHTTPClient(a.config.GitHub.AppID, a.config.GitHub.ClientID, a.config.GitHub.ClientSecret, a.config.GitHub.PrivateKeyPEM, a.config.GitHub.APIURL, a.config.GitHub.OAuthURL, nil)
 		if err != nil {
 			return err
 		}
 		platformService.SetGitHubClient(client)
+	}
+	if a.config.Runner.SharedSecret != "" {
+		platformService.SetRunnerClient(runner.New(a.config.Runner.URL, a.config.Runner.SharedSecret, a.config.Runner.RequestTimeout))
 	}
 	server := &http.Server{
 		Addr:              a.config.Address,

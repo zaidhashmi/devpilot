@@ -21,6 +21,8 @@ Currently implemented:
 - GitHub App installation lifecycle and cryptographically bound setup flow
 - Verified, idempotent GitHub webhooks and on-demand repository synchronization
 - Organization-isolated repository metadata catalog, including private repositories explicitly granted to the App
+- Secure read-only repository snapshot acquisition pinned to immutable commit SHAs
+- Resource-bounded, network-disabled structural inspection of repository data with deterministic cleanup
 - GitHub Actions CI and a Docker Compose development environment
 
 ## Planned workflow
@@ -47,6 +49,8 @@ flowchart TD
     Web[Next.js Web] --> API[Go Platform API]
     API --> PostgreSQL[(PostgreSQL)]
     API --> GitHubApp[GitHub App API]
+    API --> Runner[Workspace Runner]
+    Runner --> Inspector[Fixed-function inspection sandbox]
     API -. planned jobs .-> Runtime[Python Agent Runtime]
     Runtime -. planned execution .-> Sandbox[Isolated Sandbox]
     Sandbox -. planned changes .-> GitHub[GitHub]
@@ -54,7 +58,7 @@ flowchart TD
 
 The Go API owns platform policy and durable state. PostgreSQL is the system of record. Redis is available for future ephemeral coordination only. The Python runtime is reserved for bounded agent orchestration and does not own platform persistence.
 
-GitHub access uses a least-privilege GitHub App with read-only repository metadata permission. App JWTs and short-lived installation tokens exist only in Go process memory and are never persisted or exposed to the browser.
+GitHub access uses a least-privilege GitHub App with read-only repository metadata and contents permissions. Content acquisition tokens are narrowed to one repository. App JWTs, installation tokens, and temporary archive capabilities are never persisted or exposed to the browser.
 
 ## Technology
 
@@ -72,6 +76,7 @@ GitHub access uses a least-privilege GitHub App with read-only repository metada
 apps/web/                 Next.js web application
 services/api/             Go platform API and migrations
 services/agent-runtime/   Python runtime foundation
+services/workspace-runner/ Fixed-function snapshot acquisition and inspection runner
 packages/contracts/       Language-neutral service contracts
 infra/                    Local infrastructure assets
 scripts/                  Development checks
@@ -93,6 +98,8 @@ Run the API and web application in separate terminals:
 
 ```bash
 make api-run
+make runner-build
+make runner-run
 make web-dev
 ```
 
@@ -107,7 +114,9 @@ make api-integration-test
 
 Development defaults in `.env.example` are local placeholders only. Do not use them in production.
 
-To exercise repository discovery, configure a development GitHub App with read-only repository metadata access, enable **Request user authorization (OAuth) during installation**, set its first callback URL to `/api/v1/integrations/github/callback`, and set its webhook URL to `/api/v1/integrations/github/webhook`. Provide the App client ID and client secret along with the App ID, private key, and webhook secret. Set `DEVPILOT_GITHUB_ENABLED=true` and replace every GitHub placeholder locally. Never commit credentials.
+To exercise repository discovery and inspection, configure a development GitHub App with read-only repository metadata and contents access, enable **Request user authorization (OAuth) during installation**, set its first callback URL to `/api/v1/integrations/github/callback`, and set its webhook URL to `/api/v1/integrations/github/webhook`. Provide the App client ID and client secret along with the App ID, private key, and webhook secret. Set `DEVPILOT_GITHUB_ENABLED=true`, create a local runner shared secret, and replace every placeholder locally. Never commit credentials.
+
+The Phase 3 local inspector uses a hardened container with no network, a read-only root filesystem, dropped capabilities, a non-root user, PID/memory/CPU limits, and no container socket or credentials. This boundary is intentionally limited to data-only inspection. It is not approval to execute repository code; stronger reviewed isolation such as gVisor or microVMs is required before hostile arbitrary-code execution.
 
 ## Security philosophy
 

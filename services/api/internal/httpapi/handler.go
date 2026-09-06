@@ -64,6 +64,9 @@ func NewWithGitHub(logger *slog.Logger, db *pgxpool.Pool, service *platform.Serv
 	mux.HandleFunc("DELETE /api/v1/integrations/github", h.githubDisconnect)
 	mux.HandleFunc("POST /api/v1/integrations/github/webhook", h.githubWebhook)
 	mux.HandleFunc("GET /api/v1/repositories", h.repositories)
+	mux.HandleFunc("POST /api/v1/repositories/{repositoryID}/workspaces", h.createWorkspace)
+	mux.HandleFunc("GET /api/v1/workspaces/{workspaceID}", h.workspace)
+	mux.HandleFunc("POST /api/v1/workspaces/{workspaceID}/cancel", h.cancelWorkspace)
 	return h.requestContext(mux)
 }
 

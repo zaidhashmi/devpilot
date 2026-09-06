@@ -15,6 +15,7 @@ var (
 	ErrNotFound           = errors.New("not found")
 	ErrUnavailable        = errors.New("integration unavailable")
 	ErrInvalidWebhook     = errors.New("invalid webhook payload")
+	ErrInvalidInput       = errors.New("invalid input")
 )
 
 type User struct {
@@ -98,4 +99,19 @@ type Repository struct {
 	HTMLURL            string     `json:"html_url"`
 	GitHubUpdatedAt    *time.Time `json:"github_updated_at,omitempty"`
 	LastSyncedAt       time.Time  `json:"last_synced_at"`
+}
+
+type Workspace struct {
+	ID                      string     `json:"id"`
+	RepositoryID            string     `json:"repository_id"`
+	RepositoryFullName      string     `json:"repository_full_name"`
+	RequestedRef            string     `json:"requested_ref"`
+	ResolvedCommitSHA       string     `json:"resolved_commit_sha"`
+	Status                  string     `json:"status"`
+	InspectionArtifact      any        `json:"inspection_artifact,omitempty"`
+	FailureCode             *string    `json:"failure_code,omitempty"`
+	CancellationRequestedAt *time.Time `json:"cancellation_requested_at,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	StartedAt               *time.Time `json:"started_at,omitempty"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }

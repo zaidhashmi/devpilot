@@ -57,6 +57,11 @@ type Client interface {
 	DeleteInstallation(context.Context, int64) error
 }
 
+type ContentClient interface {
+	ResolveCommit(context.Context, int64, int64, string, string, string) (string, error)
+	ArchiveURL(context.Context, int64, int64, string, string, string) (string, error)
+}
+
 type HTTPClient struct {
 	appID        string
 	clientID     string
@@ -194,10 +199,17 @@ func (c *HTTPClient) ListRepositories(ctx context.Context, installationID int64)
 }
 
 func (c *HTTPClient) installationToken(ctx context.Context, id int64) (string, error) {
+	return c.scopedInstallationToken(ctx, id, nil, map[string]string{"metadata": "read"})
+}
+
+func (c *HTTPClient) scopedInstallationToken(ctx context.Context, id int64, repositoryIDs []int64, permissions map[string]string) (string, error) {
 	var payload struct {
 		Token string `json:"token"`
 	}
-	body := map[string]any{"permissions": map[string]string{"metadata": "read"}}
+	body := map[string]any{"permissions": permissions}
+	if len(repositoryIDs) > 0 {
+		body["repository_ids"] = repositoryIDs
+	}
 	if err := c.appRequest(ctx, http.MethodPost, fmt.Sprintf("/app/installations/%d/access_tokens", id), body, &payload); err != nil {
 		return "", err
 	}
@@ -205,6 +217,56 @@ func (c *HTTPClient) installationToken(ctx context.Context, id int64) (string, e
 		return "", errors.New("github returned an empty installation token")
 	}
 	return payload.Token, nil
+}
+
+func (c *HTTPClient) ResolveCommit(ctx context.Context, installationID, repositoryID int64, owner, name, ref string) (string, error) {
+	token, err := c.scopedInstallationToken(ctx, installationID, []int64{repositoryID}, map[string]string{"contents": "read", "metadata": "read"})
+	if err != nil {
+		return "", err
+	}
+	var payload struct {
+		SHA string `json:"sha"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/commits/%s", url.PathEscape(owner), url.PathEscape(name), url.PathEscape(ref))
+	if err := c.request(ctx, http.MethodGet, path, token, nil, &payload); err != nil {
+		return "", err
+	}
+	if len(payload.SHA) != 40 {
+		return "", errors.New("github returned an invalid commit identifier")
+	}
+	return strings.ToLower(payload.SHA), nil
+}
+
+func (c *HTTPClient) ArchiveURL(ctx context.Context, installationID, repositoryID int64, owner, name, sha string) (string, error) {
+	token, err := c.scopedInstallationToken(ctx, installationID, []int64{repositoryID}, map[string]string{"contents": "read", "metadata": "read"})
+	if err != nil {
+		return "", err
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/tarball/%s", c.baseURL, url.PathEscape(owner), url.PathEscape(name), url.PathEscape(sha))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	redirectClient := *c.http
+	redirectClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := redirectClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("github archive request: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusTemporaryRedirect && resp.StatusCode != http.StatusSeeOther {
+		return "", classify(resp.StatusCode, resp.Header)
+	}
+	location := resp.Header.Get("Location")
+	parsed, err := url.Parse(location)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return "", errors.New("github returned an invalid archive capability")
+	}
+	return location, nil
 }
 
 func (c *HTTPClient) appRequest(ctx context.Context, method, path string, body, output any) error {

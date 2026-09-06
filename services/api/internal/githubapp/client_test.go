@@ -147,3 +147,49 @@ func TestUserInstallationMustAppearInAuthorizedInstallationList(t *testing.T) {
 		t.Fatalf("unauthorized candidate error=%v", err)
 	}
 }
+
+func TestRepositoryScopedContentAccess(t *testing.T) {
+	var tokenBodies []string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/app/installations/42/access_tokens":
+			data, _ := io.ReadAll(r.Body)
+			tokenBodies = append(tokenBodies, string(data))
+			return response(201, `{"token":"installation-sensitive"}`, http.Header{}), nil
+		case "/repos/octo/repo/commits/main":
+			if r.Header.Get("Authorization") != "Bearer installation-sensitive" {
+				t.Fatal("missing scoped token")
+			}
+			return response(200, `{"sha":"0123456789abcdef0123456789abcdef01234567"}`, http.Header{}), nil
+		case "/repos/octo/repo/tarball/0123456789abcdef0123456789abcdef01234567":
+			h := http.Header{}
+			h.Set("Location", "https://codeload.github.test/ephemeral-capability")
+			return response(302, "", h), nil
+		default:
+			return response(404, "", http.Header{}), nil
+		}
+	})}
+	client, err := NewHTTPClient("123", "id", "secret", testPrivateKey(t), "https://api.github.test", "https://github.test", httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha, err := client.ResolveCommit(context.Background(), 42, 9, "octo", "repo", "main")
+	if err != nil || len(sha) != 40 {
+		t.Fatalf("sha=%q err=%v", sha, err)
+	}
+	capability, err := client.ArchiveURL(context.Background(), 42, 9, "octo", "repo", sha)
+	if err != nil || capability != "https://codeload.github.test/ephemeral-capability" {
+		t.Fatalf("capability=%q err=%v", capability, err)
+	}
+	if len(tokenBodies) != 2 {
+		t.Fatalf("token requests=%d", len(tokenBodies))
+	}
+	for _, body := range tokenBodies {
+		if !strings.Contains(body, `"repository_ids":[9]`) || !strings.Contains(body, `"contents":"read"`) {
+			t.Fatalf("token not narrowed: %s", body)
+		}
+		if strings.Contains(body, "installation-sensitive") {
+			t.Fatal("token leaked into request body")
+		}
+	}
+}

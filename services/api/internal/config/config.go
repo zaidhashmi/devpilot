@@ -20,6 +20,13 @@ type Config struct {
 	CookieSecure    bool
 	AllowedOrigin   string
 	GitHub          GitHubConfig
+	Runner          RunnerConfig
+}
+
+type RunnerConfig struct {
+	URL            string
+	SharedSecret   string
+	RequestTimeout time.Duration
 }
 
 type GitHubConfig struct {
@@ -56,6 +63,16 @@ func Load() (Config, error) {
 		APIURL:        envOrDefault("DEVPILOT_GITHUB_API_URL", "https://api.github.com"),
 		OAuthURL:      envOrDefault("DEVPILOT_GITHUB_OAUTH_URL", "https://github.com"),
 	}
+	cfg.Runner.URL = strings.TrimRight(envOrDefault("DEVPILOT_RUNNER_URL", "http://127.0.0.1:8090"), "/")
+	cfg.Runner.SharedSecret = os.Getenv("DEVPILOT_RUNNER_SHARED_SECRET")
+	if cfg.Runner.SharedSecret != "" && len(cfg.Runner.SharedSecret) < 32 {
+		return Config{}, errors.New("DEVPILOT_RUNNER_SHARED_SECRET must contain at least 32 characters")
+	}
+	runnerTimeout, runnerErr := time.ParseDuration(envOrDefault("DEVPILOT_RUNNER_TIMEOUT", "6m"))
+	if runnerErr != nil || runnerTimeout <= 0 {
+		return Config{}, errors.New("DEVPILOT_RUNNER_TIMEOUT must be a positive duration")
+	}
+	cfg.Runner.RequestTimeout = runnerTimeout
 
 	shutdownTimeout, err := time.ParseDuration(envOrDefault("DEVPILOT_SHUTDOWN_TIMEOUT", "10s"))
 	if err != nil || shutdownTimeout <= 0 {

@@ -22,6 +22,21 @@ type fakeGitHub struct {
 	deleteErr        error
 	userToken        string
 	deleted          bool
+	resolvedSHA      string
+	archiveURL       string
+}
+
+func (f *fakeGitHub) ResolveCommit(context.Context, int64, int64, string, string, string) (string, error) {
+	if f.resolvedSHA == "" {
+		return strings.Repeat("a", 40), nil
+	}
+	return f.resolvedSHA, nil
+}
+func (f *fakeGitHub) ArchiveURL(context.Context, int64, int64, string, string, string) (string, error) {
+	if f.archiveURL == "" {
+		return "https://archives.example/snapshot", nil
+	}
+	return f.archiveURL, nil
 }
 
 func (f *fakeGitHub) ExchangeUserCode(context.Context, string) (string, error) {

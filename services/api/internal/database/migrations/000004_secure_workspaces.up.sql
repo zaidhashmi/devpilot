@@ -31,4 +31,3 @@ CREATE TABLE workspace_attempts (
     completed_at timestamptz,
     UNIQUE (workspace_id, attempt_number)
 );
-

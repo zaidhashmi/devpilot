@@ -23,6 +23,9 @@ Currently implemented:
 - Organization-isolated repository metadata catalog, including private repositories explicitly granted to the App
 - Secure read-only repository snapshot acquisition pinned to immutable commit SHAs
 - Resource-bounded, network-disabled structural inspection of repository data with deterministic cleanup
+- Durable engineering tasks and immutable task runs
+- Version-bound human approval gates with deterministic pre-agent planning records
+- Restart-safe PostgreSQL transactional outbox dispatch with at-least-once, idempotent worker processing
 - GitHub Actions CI and a Docker Compose development environment
 
 ## Planned workflow
@@ -94,10 +97,11 @@ make migrate
 make bootstrap
 ```
 
-Run the API and web application in separate terminals:
+Run the API, worker, workspace runner, and web application in separate terminals:
 
 ```bash
 make api-run
+make worker-run
 make runner-build
 make runner-run
 make web-dev
@@ -127,7 +131,7 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 ## Roadmap
 
 - Repository analysis and implementation planning
-- Human approval workflows
+- Read-only repository analysis agents after explicit human approval
 - Isolated execution environments
 - Implementation, test, security, and code-review agents
 - Reviewable pull-request workflow

@@ -17,6 +17,7 @@ type fakeRunner struct {
 	requests  []runnerclient.Request
 	block     chan struct{}
 	cancelled chan string
+	returnErr error
 }
 
 func (f *fakeRunner) Inspect(ctx context.Context, r runnerclient.Request) (runnerclient.Result, error) {
@@ -29,6 +30,9 @@ func (f *fakeRunner) Inspect(ctx context.Context, r runnerclient.Request) (runne
 		case <-ctx.Done():
 			return runnerclient.Result{Status: "cancelled"}, ctx.Err()
 		}
+	}
+	if f.returnErr != nil {
+		return runnerclient.Result{}, f.returnErr
 	}
 	return runnerclient.Result{WorkspaceID: r.WorkspaceID, Status: "succeeded", Artifact: &runnerclient.Artifact{Repository: r.Repository, CommitSHA: r.CommitSHA, RegularFiles: 2, SourceTrust: "untrusted_repository_data"}}, nil
 }

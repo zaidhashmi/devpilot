@@ -1,4 +1,4 @@
-.PHONY: bootstrap check infra-up migrate api-run api-test api-integration-test runner-build runner-run runner-test agent-run agent-test web-dev web-check compose-validate contracts-validate
+.PHONY: bootstrap check infra-up migrate api-run worker-run api-test api-integration-test runner-build runner-run runner-test agent-run agent-test web-dev web-check compose-validate contracts-validate
 
 bootstrap:
 	cd services/agent-runtime && python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
@@ -14,6 +14,9 @@ migrate:
 
 api-run:
 	cd services/api && go run ./cmd/api
+
+worker-run:
+	cd services/api && go run ./cmd/worker
 
 api-test:
 	cd services/api && test -z "$$(gofmt -l .)" && go vet ./... && go test ./...
@@ -48,3 +51,4 @@ compose-validate:
 contracts-validate:
 	python3 -m json.tool packages/contracts/workspace-request.schema.json >/dev/null
 	python3 -m json.tool packages/contracts/workspace-result.schema.json >/dev/null
+	python3 -m json.tool packages/contracts/task-run-start-inspection.v1.schema.json >/dev/null

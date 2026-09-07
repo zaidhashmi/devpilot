@@ -115,3 +115,61 @@ type Workspace struct {
 	StartedAt               *time.Time `json:"started_at,omitempty"`
 	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }
+
+type EngineeringTask struct {
+	ID                 string     `json:"id"`
+	RepositoryID       string     `json:"repository_id"`
+	RepositoryFullName string     `json:"repository_full_name"`
+	CreatedByUserID    string     `json:"created_by_user_id"`
+	Title              string     `json:"title"`
+	Objective          string     `json:"objective"`
+	Status             string     `json:"status"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	ClosedAt           *time.Time `json:"closed_at,omitempty"`
+	LatestRun          *TaskRun   `json:"latest_run,omitempty"`
+}
+
+type TaskRun struct {
+	ID                      string        `json:"id"`
+	EngineeringTaskID       string        `json:"engineering_task_id"`
+	RepositoryID            string        `json:"repository_id"`
+	RepositoryFullName      string        `json:"repository_full_name"`
+	WorkspaceID             *string       `json:"workspace_id,omitempty"`
+	RunNumber               int           `json:"run_number"`
+	RequestedRef            string        `json:"requested_ref"`
+	ResolvedCommitSHA       string        `json:"resolved_commit_sha"`
+	Status                  string        `json:"status"`
+	CurrentStage            string        `json:"current_stage"`
+	CreatedByUserID         string        `json:"created_by_user_id"`
+	FailureCode             *string       `json:"failure_code,omitempty"`
+	CancellationRequestedAt *time.Time    `json:"cancellation_requested_at,omitempty"`
+	CreatedAt               time.Time     `json:"created_at"`
+	StartedAt               *time.Time    `json:"started_at,omitempty"`
+	CompletedAt             *time.Time    `json:"completed_at,omitempty"`
+	Workspace               *Workspace    `json:"workspace,omitempty"`
+	Plan                    *PlanRevision `json:"plan_revision,omitempty"`
+	Approval                *Approval     `json:"approval,omitempty"`
+}
+
+type PlanRevision struct {
+	ID             string         `json:"id"`
+	TaskRunID      string         `json:"task_run_id"`
+	RevisionNumber int            `json:"revision_number"`
+	Source         string         `json:"source"`
+	Summary        string         `json:"summary"`
+	Payload        map[string]any `json:"structured_payload"`
+	CreatedAt      time.Time      `json:"created_at"`
+}
+type Approval struct {
+	ID              string     `json:"id"`
+	TaskRunID       string     `json:"task_run_id"`
+	PlanRevisionID  string     `json:"plan_revision_id"`
+	ApprovalType    string     `json:"approval_type"`
+	Revision        int        `json:"revision"`
+	Status          string     `json:"status"`
+	RequestedAt     time.Time  `json:"requested_at"`
+	DecidedAt       *time.Time `json:"decided_at,omitempty"`
+	DecidedByUserID *string    `json:"decided_by_user_id,omitempty"`
+	DecisionComment *string    `json:"decision_comment,omitempty"`
+}

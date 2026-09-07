@@ -26,7 +26,7 @@ func (s *Service) RecoverInterruptedWorkspaces(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	rows, err := tx.Query(ctx, `UPDATE workspaces SET status='failed',failure_code='control_plane_interrupted',completed_at=now(),updated_at=now() WHERE status IN ('pending','acquiring','inspecting') RETURNING id,organization_id`)
+	rows, err := tx.Query(ctx, `UPDATE workspaces w SET status='failed',failure_code='control_plane_interrupted',completed_at=now(),updated_at=now() WHERE status IN ('pending','acquiring','inspecting') AND NOT EXISTS (SELECT 1 FROM task_runs tr WHERE tr.workspace_id=w.id AND tr.status IN ('pending','inspecting')) RETURNING id,organization_id`)
 	if err != nil {
 		return err
 	}
@@ -110,7 +110,7 @@ func (s *Service) runWorkspace(input runner.Request, organizationID string) {
 	defer cancel()
 	attemptID := newID()
 	_, _ = s.db.Exec(ctx, `UPDATE workspaces SET status='acquiring',started_at=now(),updated_at=now() WHERE id=$1 AND status='pending'`, input.WorkspaceID)
-	_, _ = s.db.Exec(ctx, `INSERT INTO workspace_attempts(id,workspace_id,attempt_number,status) VALUES($1,$2,1,'acquiring')`, attemptID, input.WorkspaceID)
+	_, _ = s.db.Exec(ctx, `INSERT INTO workspace_attempts(id,workspace_id,attempt_number,status) SELECT $1,$2,COALESCE(max(attempt_number),0)+1,'acquiring' FROM workspace_attempts WHERE workspace_id=$2`, attemptID, input.WorkspaceID)
 	result, runErr := s.runner.Inspect(ctx, input)
 	status, failure := "failed", "runner_failed"
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {

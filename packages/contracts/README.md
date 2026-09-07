@@ -14,3 +14,5 @@ Rules:
 Schemas are drafts until the first runtime integration and may change incompatibly before a tagged release.
 
 The workspace runner contracts are fixed-function inspection messages, not agent jobs and not an arbitrary command interface. The request contains an ephemeral archive capability that must never be persisted; the result contains sanitized structural metadata only.
+
+`task-run-start-inspection.v1.schema.json` defines the bounded durable outbox intent. It contains identifiers only, never credentials, archive capabilities, or repository contents.

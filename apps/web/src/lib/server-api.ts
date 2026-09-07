@@ -2,7 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 
-import type { Actor, GitHubInstallation, Repository, Workspace } from "@/lib/types";
+import type { Actor, EngineeringTask, GitHubInstallation, Repository, TaskRun, Workspace } from "@/lib/types";
 
 const apiURL = process.env.DEVPILOT_INTERNAL_API_URL ?? "http://127.0.0.1:8080";
 
@@ -38,3 +38,6 @@ export async function repositories(): Promise<Repository[]> {
   return ((await response.json()) as {repositories:Repository[]}).repositories;
 }
 export async function workspace(id:string):Promise<Workspace|null>{const response=await authenticatedFetch(`/api/v1/workspaces/${encodeURIComponent(id)}`);if(!response?.ok)return null;return await response.json() as Workspace;}
+export async function tasks():Promise<EngineeringTask[]>{const response=await authenticatedFetch("/api/v1/tasks");if(!response?.ok)return[];return((await response.json())as{tasks:EngineeringTask[]}).tasks}
+export async function task(id:string):Promise<{task:EngineeringTask;runs:TaskRun[]}|null>{const response=await authenticatedFetch(`/api/v1/tasks/${encodeURIComponent(id)}`);if(!response?.ok)return null;return await response.json() as {task:EngineeringTask;runs:TaskRun[]}}
+export async function taskRun(id:string):Promise<TaskRun|null>{const response=await authenticatedFetch(`/api/v1/task-runs/${encodeURIComponent(id)}`);if(!response?.ok)return null;return await response.json() as TaskRun}

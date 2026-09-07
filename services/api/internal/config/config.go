@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +22,16 @@ type Config struct {
 	AllowedOrigin   string
 	GitHub          GitHubConfig
 	Runner          RunnerConfig
+	Worker          WorkerConfig
+}
+
+type WorkerConfig struct {
+	PollInterval time.Duration
+	StaleClaim   time.Duration
+	BaseRetry    time.Duration
+	MaxRetry     time.Duration
+	MaxAttempts  int
+	Concurrency  int
 }
 
 type RunnerConfig struct {
@@ -73,6 +84,30 @@ func Load() (Config, error) {
 		return Config{}, errors.New("DEVPILOT_RUNNER_TIMEOUT must be a positive duration")
 	}
 	cfg.Runner.RequestTimeout = runnerTimeout
+	cfg.Worker = WorkerConfig{MaxAttempts: 5, Concurrency: 2}
+	for target, name := range map[*int]string{&cfg.Worker.MaxAttempts: "DEVPILOT_WORKER_MAX_ATTEMPTS", &cfg.Worker.Concurrency: "DEVPILOT_WORKER_CONCURRENCY"} {
+		value, parseErr := strconv.Atoi(envOrDefault(name, strconv.Itoa(*target)))
+		if parseErr != nil || value < 1 || value > 64 {
+			return Config{}, fmt.Errorf("%s must be between 1 and 64", name)
+		}
+		*target = value
+	}
+	workerDurations := []struct {
+		target         *time.Duration
+		name, fallback string
+	}{
+		{&cfg.Worker.PollInterval, "DEVPILOT_WORKER_POLL_INTERVAL", "1s"},
+		{&cfg.Worker.StaleClaim, "DEVPILOT_WORKER_STALE_CLAIM", "10m"},
+		{&cfg.Worker.BaseRetry, "DEVPILOT_WORKER_BASE_RETRY", "2s"},
+		{&cfg.Worker.MaxRetry, "DEVPILOT_WORKER_MAX_RETRY", "2m"},
+	}
+	for _, item := range workerDurations {
+		value, parseErr := time.ParseDuration(envOrDefault(item.name, item.fallback))
+		if parseErr != nil || value <= 0 {
+			return Config{}, fmt.Errorf("%s must be a positive duration", item.name)
+		}
+		*item.target = value
+	}
 
 	shutdownTimeout, err := time.ParseDuration(envOrDefault("DEVPILOT_SHUTDOWN_TIMEOUT", "10s"))
 	if err != nil || shutdownTimeout <= 0 {

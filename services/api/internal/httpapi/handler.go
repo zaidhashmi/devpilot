@@ -67,6 +67,16 @@ func NewWithGitHub(logger *slog.Logger, db *pgxpool.Pool, service *platform.Serv
 	mux.HandleFunc("POST /api/v1/repositories/{repositoryID}/workspaces", h.createWorkspace)
 	mux.HandleFunc("GET /api/v1/workspaces/{workspaceID}", h.workspace)
 	mux.HandleFunc("POST /api/v1/workspaces/{workspaceID}/cancel", h.cancelWorkspace)
+	mux.HandleFunc("POST /api/v1/repositories/{repositoryID}/tasks", h.createTask)
+	mux.HandleFunc("GET /api/v1/tasks", h.tasks)
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}", h.task)
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/runs", h.createTaskRun)
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/cancel", h.cancelTask)
+	mux.HandleFunc("GET /api/v1/task-runs/{runID}", h.taskRun)
+	mux.HandleFunc("POST /api/v1/task-runs/{runID}/cancel", h.cancelTaskRun)
+	mux.HandleFunc("GET /api/v1/task-runs/{runID}/approvals", h.approvals)
+	mux.HandleFunc("POST /api/v1/approvals/{approvalID}/approve", h.approve)
+	mux.HandleFunc("POST /api/v1/approvals/{approvalID}/reject", h.reject)
 	return h.requestContext(mux)
 }
 

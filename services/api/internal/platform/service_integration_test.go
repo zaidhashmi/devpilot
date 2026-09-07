@@ -41,7 +41,7 @@ func integrationService(t *testing.T) (*Service, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = lock.Exec(context.Background(), `SELECT pg_advisory_unlock(99887766)`); lock.Release() })
-	_, err = pool.Exec(context.Background(), `TRUNCATE audit_events,sessions,organization_memberships,organizations,users CASCADE`)
+	_, err = pool.Exec(context.Background(), `TRUNCATE github_webhook_deliveries,audit_events,sessions,organization_memberships,organizations,users CASCADE`)
 	if err != nil {
 		t.Fatal(err)
 	}

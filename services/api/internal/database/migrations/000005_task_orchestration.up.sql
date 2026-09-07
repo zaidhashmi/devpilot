@@ -27,7 +27,7 @@ CREATE TABLE task_runs (
     UNIQUE (engineering_task_id, run_number)
 );
 CREATE INDEX task_runs_org_created_idx ON task_runs (organization_id, created_at DESC);
-CREATE INDEX task_runs_active_idx ON task_runs (status) WHERE status IN ('pending','inspecting','awaiting_approval');
+CREATE INDEX task_runs_active_idx ON task_runs (status) WHERE status IN ('pending','inspecting','awaiting_approval','approved');
 
 CREATE TABLE task_plan_revisions (
     id uuid PRIMARY KEY,

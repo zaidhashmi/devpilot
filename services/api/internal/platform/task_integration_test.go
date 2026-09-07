@@ -81,8 +81,22 @@ func TestTaskRunOutboxRecoveryAndApproval(t *testing.T) {
 	if err != nil || approved.Status != "approved" {
 		t.Fatalf("approval=%+v err=%v", approved, err)
 	}
+	value, err = s.TaskRun(ctx, actor, run.ID)
+	if err != nil || value.Status != "approved" || value.CompletedAt != nil || value.CurrentStage != "approval" {
+		t.Fatalf("approved checkpoint=%+v err=%v", value, err)
+	}
+	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE aggregate_id=$1`, run.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("approval dispatched downstream work: count=%d err=%v", count, err)
+	}
 	if _, err = s.DecideApproval(ctx, actor, value.Approval.ID, "rejected", "", "second"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("second decision=%v", err)
+	}
+	if err = s.CancelTaskRun(ctx, actor, run.ID, "cancel-approved"); err != nil {
+		t.Fatalf("cancel approved checkpoint: %v", err)
+	}
+	value, err = s.TaskRun(ctx, actor, run.ID)
+	if err != nil || value.Status != "cancelled" || value.CompletedAt == nil {
+		t.Fatalf("cancelled approved checkpoint=%+v err=%v", value, err)
 	}
 	var leaked bool
 	if err = s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM outbox_events WHERE payload::text ILIKE '%codeload%' OR payload::text ILIKE '%token%' UNION ALL SELECT 1 FROM approvals WHERE decision_comment ILIKE '%codeload%')`).Scan(&leaked); err != nil || leaked {

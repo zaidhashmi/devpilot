@@ -24,9 +24,14 @@ var validRunTransitions = map[string]map[string]bool{
 	"pending":           {"inspecting": true, "cancelled": true, "failed": true, "timed_out": true},
 	"inspecting":        {"awaiting_approval": true, "cancelled": true, "failed": true, "timed_out": true},
 	"awaiting_approval": {"approved": true, "rejected": true, "cancelled": true},
+	"approved":          {"cancelled": true},
 }
 
 func ValidTaskRunTransition(from, to string) bool { return validRunTransitions[from][to] }
+
+func IsTerminalTaskRunStatus(status string) bool {
+	return status == "rejected" || status == "cancelled" || status == "failed" || status == "timed_out" || status == "completed"
+}
 
 func (s *Service) CreateTask(ctx context.Context, actor Actor, repositoryID, title, objective, requestID string) (EngineeringTask, error) {
 	if !authz.Allowed(actor.Membership.Role, authz.TasksCreate) {
@@ -264,7 +269,7 @@ func (s *Service) CancelTask(ctx context.Context, actor Actor, id, requestID str
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	var runID *string
-	err = tx.QueryRow(ctx, `UPDATE engineering_tasks SET status='cancelled',closed_at=now(),updated_at=now() WHERE id=$1 AND organization_id=$2 AND status='active' RETURNING (SELECT id FROM task_runs WHERE engineering_task_id=$1 AND status IN ('pending','inspecting','awaiting_approval') ORDER BY run_number DESC LIMIT 1)`, id, actor.Organization.ID).Scan(&runID)
+	err = tx.QueryRow(ctx, `UPDATE engineering_tasks SET status='cancelled',closed_at=now(),updated_at=now() WHERE id=$1 AND organization_id=$2 AND status='active' RETURNING (SELECT id FROM task_runs WHERE engineering_task_id=$1 AND status IN ('pending','inspecting','awaiting_approval','approved') ORDER BY run_number DESC LIMIT 1)`, id, actor.Organization.ID).Scan(&runID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
@@ -320,7 +325,13 @@ func (s *Service) DecideApproval(ctx context.Context, actor Actor, id, decision,
 	if err != nil {
 		return Approval{}, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE task_runs SET status=$2,current_stage='finished',completed_at=$3 WHERE id=$1 AND status='awaiting_approval'`, a.TaskRunID, decision, now)
+	stage := "finished"
+	var completedAt any = now
+	if decision == "approved" {
+		stage = "approval"
+		completedAt = nil
+	}
+	_, err = tx.Exec(ctx, `UPDATE task_runs SET status=$2,current_stage=$3,completed_at=$4 WHERE id=$1 AND status='awaiting_approval'`, a.TaskRunID, decision, stage, completedAt)
 	if err != nil {
 		return Approval{}, err
 	}

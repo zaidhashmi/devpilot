@@ -1,7 +1,7 @@
 .PHONY: bootstrap check infra-up migrate api-run worker-run api-test api-integration-test runner-build runner-run runner-test agent-run agent-test web-dev web-check compose-validate contracts-validate
 
 bootstrap:
-	cd services/agent-runtime && python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+	cd services/agent-runtime && python3.12 -m venv .venv && .venv/bin/pip install -r requirements.lock && .venv/bin/pip install --no-deps -e .
 	cd apps/web && npm ci
 
 check: api-test runner-test agent-test web-check compose-validate contracts-validate
@@ -22,7 +22,8 @@ api-test:
 	cd services/api && test -z "$$(gofmt -l .)" && go vet ./... && go test ./...
 
 api-integration-test:
-	cd services/api && DEVPILOT_TEST_DATABASE_URL="$${DEVPILOT_DATABASE_URL:-postgres://devpilot:devpilot_local@localhost:5432/devpilot?sslmode=disable}" go test -count=1 ./...
+	@test -n "$${DEVPILOT_TEST_DATABASE_URL}" || (echo "DEVPILOT_TEST_DATABASE_URL must name a disposable test database" && exit 1)
+	cd services/api && go test -count=1 ./...
 
 runner-build:
 	docker build -t devpilot-workspace-inspector:local services/workspace-runner
@@ -52,3 +53,5 @@ contracts-validate:
 	python3 -m json.tool packages/contracts/workspace-request.schema.json >/dev/null
 	python3 -m json.tool packages/contracts/workspace-result.schema.json >/dev/null
 	python3 -m json.tool packages/contracts/task-run-start-inspection.v1.schema.json >/dev/null
+	python3 -m json.tool packages/contracts/task-run-start-analysis.v1.schema.json >/dev/null
+	python3 -m json.tool packages/contracts/agent-run.v1.schema.json >/dev/null

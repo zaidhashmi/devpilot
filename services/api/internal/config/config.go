@@ -22,7 +22,20 @@ type Config struct {
 	AllowedOrigin   string
 	GitHub          GitHubConfig
 	Runner          RunnerConfig
+	Agent           AgentConfig
 	Worker          WorkerConfig
+}
+
+type AgentConfig struct {
+	Enabled              bool
+	URL                  string
+	ServiceToken         string
+	SourceBrokerURL      string
+	PromptVersion        string
+	MaxTurns             int
+	OverallTimeout       time.Duration
+	OllamaOverallTimeout time.Duration
+	RequestTimeout       time.Duration
 }
 
 type WorkerConfig struct {
@@ -84,6 +97,53 @@ func Load() (Config, error) {
 		return Config{}, errors.New("DEVPILOT_RUNNER_TIMEOUT must be a positive duration")
 	}
 	cfg.Runner.RequestTimeout = runnerTimeout
+	cfg.Agent = AgentConfig{
+		Enabled:         strings.EqualFold(os.Getenv("DEVPILOT_ANALYSIS_ENABLED"), "true"),
+		URL:             strings.TrimRight(envOrDefault("DEVPILOT_AGENT_RUNTIME_URL", "http://127.0.0.1:8091"), "/"),
+		ServiceToken:    os.Getenv("DEVPILOT_AGENT_SERVICE_TOKEN"),
+		SourceBrokerURL: strings.TrimRight(envOrDefault("DEVPILOT_SOURCE_BROKER_URL", "http://127.0.0.1:8080"), "/"),
+		PromptVersion:   envOrDefault("DEVPILOT_ANALYSIS_PROMPT_VERSION", "repository-analysis-v2"), MaxTurns: 10,
+	}
+	if value, parseErr := strconv.Atoi(envOrDefault("DEVPILOT_ANALYSIS_MAX_TURNS", "10")); parseErr != nil || value < 1 || value > 20 {
+		return Config{}, errors.New("DEVPILOT_ANALYSIS_MAX_TURNS must be between 1 and 20")
+	} else {
+		cfg.Agent.MaxTurns = value
+	}
+	for target, name, fallback := &cfg.Agent.OverallTimeout, "DEVPILOT_ANALYSIS_OVERALL_TIMEOUT", "5m"; target != nil; target = nil {
+		value, parseErr := time.ParseDuration(envOrDefault(name, fallback))
+		if parseErr != nil || value <= 0 {
+			return Config{}, fmt.Errorf("%s must be a positive duration", name)
+		}
+		*target = value
+	}
+	if value, parseErr := time.ParseDuration(envOrDefault("DEVPILOT_OLLAMA_ANALYSIS_OVERALL_TIMEOUT", "10m")); parseErr != nil || value <= 0 {
+		return Config{}, errors.New("DEVPILOT_OLLAMA_ANALYSIS_OVERALL_TIMEOUT must be a positive duration")
+	} else {
+		cfg.Agent.OllamaOverallTimeout = value
+	}
+	value, parseErr := time.ParseDuration(envOrDefault("DEVPILOT_AGENT_RUNTIME_TIMEOUT", "6m"))
+	if parseErr != nil || value <= 0 {
+		return Config{}, errors.New("DEVPILOT_AGENT_RUNTIME_TIMEOUT must be a positive duration")
+	}
+	cfg.Agent.RequestTimeout = value
+	if cfg.Agent.ServiceToken != "" && len(cfg.Agent.ServiceToken) < 32 {
+		return Config{}, errors.New("DEVPILOT_AGENT_SERVICE_TOKEN must contain at least 32 characters")
+	}
+	if cfg.Agent.Enabled {
+		missing := make([]string, 0, 3)
+		if cfg.Agent.URL == "" {
+			missing = append(missing, "DEVPILOT_AGENT_RUNTIME_URL")
+		}
+		if cfg.Agent.SourceBrokerURL == "" {
+			missing = append(missing, "DEVPILOT_SOURCE_BROKER_URL")
+		}
+		if cfg.Agent.ServiceToken == "" {
+			missing = append(missing, "DEVPILOT_AGENT_SERVICE_TOKEN")
+		}
+		if len(missing) > 0 {
+			return Config{}, fmt.Errorf("analysis execution configuration invalid; missing %s", strings.Join(missing, ", "))
+		}
+	}
 	cfg.Worker = WorkerConfig{MaxAttempts: 5, Concurrency: 2}
 	for target, name := range map[*int]string{&cfg.Worker.MaxAttempts: "DEVPILOT_WORKER_MAX_ATTEMPTS", &cfg.Worker.Concurrency: "DEVPILOT_WORKER_CONCURRENCY"} {
 		value, parseErr := strconv.Atoi(envOrDefault(name, strconv.Itoa(*target)))
@@ -97,7 +157,7 @@ func Load() (Config, error) {
 		name, fallback string
 	}{
 		{&cfg.Worker.PollInterval, "DEVPILOT_WORKER_POLL_INTERVAL", "1s"},
-		{&cfg.Worker.StaleClaim, "DEVPILOT_WORKER_STALE_CLAIM", "10m"},
+		{&cfg.Worker.StaleClaim, "DEVPILOT_WORKER_STALE_CLAIM", "15m"},
 		{&cfg.Worker.BaseRetry, "DEVPILOT_WORKER_BASE_RETRY", "2s"},
 		{&cfg.Worker.MaxRetry, "DEVPILOT_WORKER_MAX_RETRY", "2m"},
 	}
@@ -107,6 +167,9 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("%s must be a positive duration", item.name)
 		}
 		*item.target = value
+	}
+	if max(cfg.Agent.OverallTimeout, cfg.Agent.OllamaOverallTimeout) >= cfg.Worker.StaleClaim {
+		return Config{}, errors.New("DEVPILOT_WORKER_STALE_CLAIM must exceed all analysis overall timeouts")
 	}
 
 	shutdownTimeout, err := time.ParseDuration(envOrDefault("DEVPILOT_SHUTDOWN_TIMEOUT", "10s"))

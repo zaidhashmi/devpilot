@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/devpilot/devpilot/services/api/internal/agentclient"
 	"github.com/devpilot/devpilot/services/api/internal/config"
 	"github.com/devpilot/devpilot/services/api/internal/database"
 	"github.com/devpilot/devpilot/services/api/internal/githubapp"
@@ -43,6 +44,18 @@ func main() {
 	}
 	if cfg.Runner.SharedSecret != "" {
 		service.SetRunnerClient(runner.New(cfg.Runner.URL, cfg.Runner.SharedSecret, cfg.Runner.RequestTimeout))
+	}
+	if cfg.Agent.Enabled {
+		agentClient := agentclient.New(cfg.Agent.URL, cfg.Agent.ServiceToken, cfg.Agent.RequestTimeout)
+		service.SetAgentClient(agentClient, platform.AgentRuntimeConfigFrom(cfg.Agent))
+		readinessCtx, readinessCancel := context.WithTimeout(ctx, 5*time.Second)
+		selection, readinessErr := agentClient.ResolveProvider(readinessCtx)
+		readinessCancel()
+		if readinessErr != nil {
+			logger.Warn("agent runtime configured but not ready", "status", "runtime_unreachable")
+		} else {
+			logger.Info("agent runtime ready", "status", "provider_ready", "provider", selection.Provider, "model", selection.Model)
+		}
 	}
 	workerID := "worker-" + uuid.NewString()
 	semaphore := make(chan struct{}, cfg.Worker.Concurrency)

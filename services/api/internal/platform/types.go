@@ -131,25 +131,27 @@ type EngineeringTask struct {
 }
 
 type TaskRun struct {
-	ID                      string        `json:"id"`
-	EngineeringTaskID       string        `json:"engineering_task_id"`
-	RepositoryID            string        `json:"repository_id"`
-	RepositoryFullName      string        `json:"repository_full_name"`
-	WorkspaceID             *string       `json:"workspace_id,omitempty"`
-	RunNumber               int           `json:"run_number"`
-	RequestedRef            string        `json:"requested_ref"`
-	ResolvedCommitSHA       string        `json:"resolved_commit_sha"`
-	Status                  string        `json:"status"`
-	CurrentStage            string        `json:"current_stage"`
-	CreatedByUserID         string        `json:"created_by_user_id"`
-	FailureCode             *string       `json:"failure_code,omitempty"`
-	CancellationRequestedAt *time.Time    `json:"cancellation_requested_at,omitempty"`
-	CreatedAt               time.Time     `json:"created_at"`
-	StartedAt               *time.Time    `json:"started_at,omitempty"`
-	CompletedAt             *time.Time    `json:"completed_at,omitempty"`
-	Workspace               *Workspace    `json:"workspace,omitempty"`
-	Plan                    *PlanRevision `json:"plan_revision,omitempty"`
-	Approval                *Approval     `json:"approval,omitempty"`
+	ID                      string            `json:"id"`
+	EngineeringTaskID       string            `json:"engineering_task_id"`
+	RepositoryID            string            `json:"repository_id"`
+	RepositoryFullName      string            `json:"repository_full_name"`
+	WorkspaceID             *string           `json:"workspace_id,omitempty"`
+	RunNumber               int               `json:"run_number"`
+	RequestedRef            string            `json:"requested_ref"`
+	ResolvedCommitSHA       string            `json:"resolved_commit_sha"`
+	Status                  string            `json:"status"`
+	CurrentStage            string            `json:"current_stage"`
+	CreatedByUserID         string            `json:"created_by_user_id"`
+	FailureCode             *string           `json:"failure_code,omitempty"`
+	CancellationRequestedAt *time.Time        `json:"cancellation_requested_at,omitempty"`
+	CreatedAt               time.Time         `json:"created_at"`
+	StartedAt               *time.Time        `json:"started_at,omitempty"`
+	CompletedAt             *time.Time        `json:"completed_at,omitempty"`
+	Workspace               *Workspace        `json:"workspace,omitempty"`
+	Plan                    *PlanRevision     `json:"plan_revision,omitempty"`
+	Approval                *Approval         `json:"approval,omitempty"`
+	AgentRun                *AgentRun         `json:"agent_run,omitempty"`
+	Analysis                *AnalysisRevision `json:"analysis_revision,omitempty"`
 }
 
 type PlanRevision struct {
@@ -162,14 +164,76 @@ type PlanRevision struct {
 	CreatedAt      time.Time      `json:"created_at"`
 }
 type Approval struct {
+	ID                 string     `json:"id"`
+	TaskRunID          string     `json:"task_run_id"`
+	PlanRevisionID     *string    `json:"plan_revision_id,omitempty"`
+	AnalysisRevisionID *string    `json:"analysis_revision_id,omitempty"`
+	ApprovalType       string     `json:"approval_type"`
+	Revision           int        `json:"revision"`
+	Status             string     `json:"status"`
+	RequestedAt        time.Time  `json:"requested_at"`
+	DecidedAt          *time.Time `json:"decided_at,omitempty"`
+	DecidedByUserID    *string    `json:"decided_by_user_id,omitempty"`
+	DecisionComment    *string    `json:"decision_comment,omitempty"`
+}
+
+type AgentRun struct {
 	ID              string     `json:"id"`
 	TaskRunID       string     `json:"task_run_id"`
-	PlanRevisionID  string     `json:"plan_revision_id"`
-	ApprovalType    string     `json:"approval_type"`
-	Revision        int        `json:"revision"`
+	AgentType       string     `json:"agent_type"`
 	Status          string     `json:"status"`
-	RequestedAt     time.Time  `json:"requested_at"`
-	DecidedAt       *time.Time `json:"decided_at,omitempty"`
-	DecidedByUserID *string    `json:"decided_by_user_id,omitempty"`
-	DecisionComment *string    `json:"decision_comment,omitempty"`
+	Provider        string     `json:"provider"`
+	Model           string     `json:"model"`
+	ReasoningEffort *string    `json:"reasoning_effort,omitempty"`
+	PromptVersion   string     `json:"prompt_version"`
+	TraceID         *string    `json:"trace_id,omitempty"`
+	FailureCode     *string    `json:"failure_code,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+}
+
+type AnalysisRevision struct {
+	ID              string         `json:"id"`
+	TaskRunID       string         `json:"task_run_id"`
+	AgentRunID      string         `json:"agent_run_id"`
+	RevisionNumber  int            `json:"revision_number"`
+	Source          string         `json:"source"`
+	Provider        string         `json:"provider"`
+	Model           string         `json:"model"`
+	ReasoningEffort *string        `json:"reasoning_effort,omitempty"`
+	PromptVersion   string         `json:"prompt_version"`
+	Payload         map[string]any `json:"structured_payload"`
+	CreatedAt       time.Time      `json:"created_at"`
+	Evidence        []SourceAccess `json:"evidence"`
+}
+
+type SourceAccess struct {
+	ID             string `json:"id"`
+	Path           string `json:"path"`
+	CommitSHA      string `json:"commit_sha"`
+	StartLine      int    `json:"start_line"`
+	EndLine        int    `json:"end_line"`
+	RedactionCount int    `json:"redaction_count"`
+	ContentDigest  string `json:"content_digest,omitempty"`
+}
+
+type SourceFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+type SourceFileIndex struct {
+	Files           []SourceFile `json:"files"`
+	ActualFileCount int          `json:"actual_file_count"`
+}
+type SourceExcerpt struct {
+	SourceReferenceID string `json:"source_reference_id"`
+	Path              string `json:"path"`
+	CommitSHA         string `json:"commit_sha"`
+	StartLine         int    `json:"start_line"`
+	EndLine           int    `json:"end_line"`
+	Content           string `json:"content"`
+	RedactionCount    int    `json:"redaction_count"`
+	Bytes             int    `json:"bytes"`
+	Truncated         bool   `json:"truncated"`
 }

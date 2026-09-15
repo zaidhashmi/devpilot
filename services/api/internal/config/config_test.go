@@ -70,3 +70,44 @@ func TestLoadRequiresGitHubOAuthClientSecret(t *testing.T) {
 		t.Fatalf("expected explicit client secret configuration error, got %v", err)
 	}
 }
+
+func TestLoadConfiguresAnalysisWithCanonicalServiceToken(t *testing.T) {
+	t.Setenv("DEVPILOT_ENV", "test")
+	t.Setenv("DEVPILOT_ANALYSIS_ENABLED", "true")
+	t.Setenv("DEVPILOT_AGENT_SERVICE_TOKEN", "test-agent-service-token-32-characters")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Agent.Enabled || cfg.Agent.ServiceToken == "" {
+		t.Fatal("canonical service token did not configure analysis client")
+	}
+}
+
+func TestLoadFailsFastWhenAnalysisTokenMissing(t *testing.T) {
+	t.Setenv("DEVPILOT_ENV", "test")
+	t.Setenv("DEVPILOT_ANALYSIS_ENABLED", "true")
+	t.Setenv("DEVPILOT_AGENT_SERVICE_TOKEN", "")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "DEVPILOT_AGENT_SERVICE_TOKEN") {
+		t.Fatalf("expected canonical token configuration error, got %v", err)
+	}
+}
+
+func TestLoadDoesNotAcceptLegacyRuntimeServiceTokenName(t *testing.T) {
+	legacySecret := "legacy-agent-runtime-token-32-characters"
+	t.Setenv("DEVPILOT_ENV", "test")
+	t.Setenv("DEVPILOT_ANALYSIS_ENABLED", "true")
+	t.Setenv("DEVPILOT_AGENT_SERVICE_TOKEN", "")
+	t.Setenv("DEVPILOT_AGENT_RUNTIME_SERVICE_TOKEN", legacySecret)
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "DEVPILOT_AGENT_SERVICE_TOKEN") {
+		t.Fatalf("expected legacy variable to be ignored, got %v", err)
+	}
+	if strings.Contains(err.Error(), legacySecret) {
+		t.Fatal("configuration error leaked secret value")
+	}
+}

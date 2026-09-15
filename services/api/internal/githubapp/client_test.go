@@ -165,6 +165,19 @@ func TestRepositoryScopedContentAccess(t *testing.T) {
 			h := http.Header{}
 			h.Set("Location", "https://codeload.github.test/ephemeral-capability")
 			return response(302, "", h), nil
+		case "/repos/octo/repo/git/trees/0123456789abcdef0123456789abcdef01234567":
+			if r.URL.Query().Get("recursive") != "1" {
+				t.Fatal("file index is not recursive")
+			}
+			return response(200, `{"truncated":false,"tree":[{"path":"internal/app.go","type":"blob","size":42}]}`, http.Header{}), nil
+		case "/repos/octo/repo/contents/internal/app.go":
+			if r.URL.Query().Get("ref") != "0123456789abcdef0123456789abcdef01234567" {
+				t.Fatal("source read not pinned to SHA")
+			}
+			if r.Header.Get("Accept") != "application/vnd.github.raw+json" {
+				t.Fatal("source read is not raw")
+			}
+			return response(200, "package app\n", http.Header{}), nil
 		default:
 			return response(404, "", http.Header{}), nil
 		}
@@ -181,7 +194,15 @@ func TestRepositoryScopedContentAccess(t *testing.T) {
 	if err != nil || capability != "https://codeload.github.test/ephemeral-capability" {
 		t.Fatalf("capability=%q err=%v", capability, err)
 	}
-	if len(tokenBodies) != 2 {
+	files, err := client.ListFiles(context.Background(), 42, 9, "octo", "repo", sha)
+	if err != nil || len(files) != 1 || files[0].Path != "internal/app.go" {
+		t.Fatalf("files=%+v err=%v", files, err)
+	}
+	source, err := client.ReadFile(context.Background(), 42, 9, "octo", "repo", sha, "internal/app.go")
+	if err != nil || string(source) != "package app\n" {
+		t.Fatalf("source=%q err=%v", source, err)
+	}
+	if len(tokenBodies) != 4 {
 		t.Fatalf("token requests=%d", len(tokenBodies))
 	}
 	for _, body := range tokenBodies {

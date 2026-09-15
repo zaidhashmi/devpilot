@@ -13,7 +13,7 @@ Currently implemented:
 - Production-oriented monorepo foundation
 - Next.js frontend and authenticated application shell
 - Authoritative Go platform API
-- Python agent-runtime foundation without active agent workflows
+- Python agent runtime using the OpenAI Agents SDK for one bounded, evidence-backed analysis workflow
 - PostgreSQL platform persistence and explicit migrations
 - Organization-aware multi-tenancy
 - Local password authentication and secure server-side sessions
@@ -26,6 +26,10 @@ Currently implemented:
 - Durable engineering tasks and immutable task runs
 - Version-bound human approval gates with deterministic pre-agent planning records
 - Restart-safe PostgreSQL transactional outbox dispatch with at-least-once, idempotent worker processing
+- One read-only Repository Analysis Agent with strict structured output and verified source evidence
+- Hosted OpenAI and local Ollama model providers with explicit or automatic selection
+- Model-directed, platform-controlled repository evidence acquisition at immutable commits
+- Run-scoped source capabilities, bounded source access, redaction, usage accounting, and privacy-safe tracing
 - GitHub Actions CI and a Docker Compose development environment
 
 ## Planned workflow
@@ -54,12 +58,17 @@ flowchart TD
     API --> GitHubApp[GitHub App API]
     API --> Runner[Workspace Runner]
     Runner --> Inspector[Fixed-function inspection sandbox]
-    API -. planned jobs .-> Runtime[Python Agent Runtime]
-    Runtime -. planned execution .-> Sandbox[Isolated Sandbox]
+    API --> Runtime[Python Repository Analysis Runtime]
+    Runtime -->|bounded source requests| API
+    API -. planned execution .-> Sandbox[Isolated Sandbox]
     Sandbox -. planned changes .-> GitHub[GitHub]
 ```
 
 The Go API owns platform policy and durable state. PostgreSQL is the system of record. Redis is available for future ephemeral coordination only. The Python runtime is reserved for bounded agent orchestration and does not own platform persistence.
+
+### Model providers
+
+DevPilot can run repository analysis with a hosted OpenAI model or a local Ollama model. With `DEVPILOT_MODEL_PROVIDER=auto`, a configured `OPENAI_API_KEY` selects OpenAI; otherwise DevPilot selects Ollama. `openai` and `ollama` may also be selected explicitly. Provider and model are fixed when each AgentRun is created, so retries never silently switch providers. Local and hosted models may differ in quality and supported usage metrics.
 
 GitHub access uses a least-privilege GitHub App with read-only repository metadata and contents permissions. Content acquisition tokens are narrowed to one repository. App JWTs, installation tokens, and temporary archive capabilities are never persisted or exposed to the browser.
 
@@ -97,13 +106,14 @@ make migrate
 make bootstrap
 ```
 
-Run the API, worker, workspace runner, and web application in separate terminals:
+Run the API, worker, workspace runner, agent runtime, and web application in separate terminals:
 
 ```bash
 make api-run
 make worker-run
 make runner-build
 make runner-run
+make agent-run
 make web-dev
 ```
 
@@ -130,8 +140,7 @@ Security issues should be reported according to [SECURITY.md](SECURITY.md).
 
 ## Roadmap
 
-- Repository analysis and implementation planning
-- Read-only repository analysis agents after explicit human approval
+- Implementation planning after analysis approval
 - Isolated execution environments
 - Implementation, test, security, and code-review agents
 - Reviewable pull-request workflow

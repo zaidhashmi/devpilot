@@ -85,8 +85,8 @@ func TestTaskRunOutboxRecoveryAndApproval(t *testing.T) {
 	if err != nil || value.Status != "approved" || value.CompletedAt != nil || value.CurrentStage != "approval" {
 		t.Fatalf("approved checkpoint=%+v err=%v", value, err)
 	}
-	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE aggregate_id=$1`, run.ID).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("approval dispatched downstream work: count=%d err=%v", count, err)
+	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE aggregate_id=$1`, run.ID).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("analysis dispatch count=%d err=%v", count, err)
 	}
 	if _, err = s.DecideApproval(ctx, actor, value.Approval.ID, "rejected", "", "second"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("second decision=%v", err)

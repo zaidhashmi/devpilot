@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/devpilot/devpilot/services/api/internal/agentclient"
 	"github.com/devpilot/devpilot/services/api/internal/config"
 	"github.com/devpilot/devpilot/services/api/internal/database"
 	"github.com/devpilot/devpilot/services/api/internal/githubapp"
@@ -44,9 +45,12 @@ func (a *App) Run(ctx context.Context) error {
 	if a.config.Runner.SharedSecret != "" {
 		platformService.SetRunnerClient(runner.New(a.config.Runner.URL, a.config.Runner.SharedSecret, a.config.Runner.RequestTimeout))
 	}
+	if a.config.Agent.Enabled {
+		platformService.SetAgentClient(agentclient.New(a.config.Agent.URL, a.config.Agent.ServiceToken, a.config.Agent.RequestTimeout), platform.AgentRuntimeConfigFrom(a.config.Agent))
+	}
 	server := &http.Server{
 		Addr:              a.config.Address,
-		Handler:           httpapi.NewWithGitHub(a.logger, db, platformService, a.config.CookieSecure, a.config.AllowedOrigin, a.config.GitHub.Enabled, a.config.GitHub.AppSlug, a.config.GitHub.WebhookSecret),
+		Handler:           httpapi.NewWithGitHub(a.logger, db, platformService, a.config.CookieSecure, a.config.AllowedOrigin, a.config.GitHub.Enabled, a.config.GitHub.AppSlug, a.config.GitHub.WebhookSecret, a.config.Agent.ServiceToken),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

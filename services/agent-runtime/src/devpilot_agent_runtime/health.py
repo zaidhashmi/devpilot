@@ -19,18 +19,14 @@ class HealthServer:
             self._server.close()
             await self._server.wait_closed()
 
-    async def _handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             request_line = await asyncio.wait_for(reader.readline(), timeout=2)
             parts = request_line.decode("ascii", errors="replace").strip().split()
             path = parts[1] if len(parts) >= 2 else ""
             if path in {"/healthz", "/readyz"}:
                 status = HTTPStatus.OK
-                body = json.dumps(
-                    {"status": "ok" if path == "/healthz" else "ready"}
-                ).encode()
+                body = json.dumps({"status": "ok" if path == "/healthz" else "ready"}).encode()
             else:
                 status = HTTPStatus.NOT_FOUND
                 body = json.dumps({"error": "not_found"}).encode()

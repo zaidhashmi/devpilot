@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strings"
@@ -8,6 +9,13 @@ import (
 	"github.com/devpilot/devpilot/services/api/internal/githubapp"
 	"github.com/devpilot/devpilot/services/api/internal/platform"
 )
+
+type sourceReadRequest struct {
+	Path      string `json:"path"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+	MaxBytes  int    `json:"max_bytes"`
+}
 
 type createTaskRequest struct {
 	Title     string `json:"title"`
@@ -157,4 +165,69 @@ func (h *Handler) taskError(w http.ResponseWriter, r *http.Request, err error) {
 	default:
 		h.platformError(w, r, err)
 	}
+}
+
+func (h *Handler) analysis(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.requireActor(w, r)
+	if !ok {
+		return
+	}
+	value, err := h.platform.Analysis(r.Context(), actor, r.PathValue("runID"))
+	if err != nil {
+		h.taskError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+func (h *Handler) agentRun(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.requireActor(w, r)
+	if !ok {
+		return
+	}
+	value, err := h.platform.AgentRun(r.Context(), actor, r.PathValue("agentRunID"))
+	if err != nil {
+		h.taskError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+func (h *Handler) sourceAuth(r *http.Request) (string, bool) {
+	if h.agentServiceToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-DevPilot-Service-Token")), []byte(h.agentServiceToken)) != 1 {
+		return "", false
+	}
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		return "", false
+	}
+	return strings.TrimPrefix(header, "Bearer "), true
+}
+func (h *Handler) agentSourceFiles(w http.ResponseWriter, r *http.Request) {
+	token, ok := h.sourceAuth(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Internal source capability required", requestID(r))
+		return
+	}
+	index, err := h.platform.ListAgentSourceIndex(r.Context(), token)
+	if err != nil {
+		h.taskError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, index)
+}
+func (h *Handler) agentSourceRead(w http.ResponseWriter, r *http.Request) {
+	token, ok := h.sourceAuth(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Internal source capability required", requestID(r))
+		return
+	}
+	var body sourceReadRequest
+	if decodeJSON(w, r, &body) != nil {
+		return
+	}
+	value, err := h.platform.ReadAgentSource(r.Context(), token, body.Path, body.StartLine, body.EndLine, body.MaxBytes)
+	if err != nil {
+		h.taskError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
 }

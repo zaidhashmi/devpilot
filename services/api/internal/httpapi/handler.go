@@ -39,14 +39,18 @@ type Handler struct {
 	githubEnabled       bool
 	githubAppSlug       string
 	githubWebhookSecret string
+	agentServiceToken   string
 }
 
 func New(logger *slog.Logger, db *pgxpool.Pool, service *platform.Service, cookieSecure bool, allowedOrigin string) http.Handler {
 	return NewWithGitHub(logger, db, service, cookieSecure, allowedOrigin, false, "", "")
 }
 
-func NewWithGitHub(logger *slog.Logger, db *pgxpool.Pool, service *platform.Service, cookieSecure bool, allowedOrigin string, githubEnabled bool, githubAppSlug, webhookSecret string) http.Handler {
+func NewWithGitHub(logger *slog.Logger, db *pgxpool.Pool, service *platform.Service, cookieSecure bool, allowedOrigin string, githubEnabled bool, githubAppSlug, webhookSecret string, agentToken ...string) http.Handler {
 	h := &Handler{logger: logger, db: db, platform: service, cookieSecure: cookieSecure, allowedOrigin: allowedOrigin, loginLimiter: newRateLimiter(10, time.Minute), githubEnabled: githubEnabled, githubAppSlug: githubAppSlug, githubWebhookSecret: webhookSecret}
+	if len(agentToken) > 0 {
+		h.agentServiceToken = agentToken[0]
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /readyz", h.ready)
@@ -77,6 +81,10 @@ func NewWithGitHub(logger *slog.Logger, db *pgxpool.Pool, service *platform.Serv
 	mux.HandleFunc("GET /api/v1/task-runs/{runID}/approvals", h.approvals)
 	mux.HandleFunc("POST /api/v1/approvals/{approvalID}/approve", h.approve)
 	mux.HandleFunc("POST /api/v1/approvals/{approvalID}/reject", h.reject)
+	mux.HandleFunc("GET /api/v1/task-runs/{runID}/analysis", h.analysis)
+	mux.HandleFunc("GET /api/v1/agent-runs/{agentRunID}", h.agentRun)
+	mux.HandleFunc("GET /internal/v1/source/files", h.agentSourceFiles)
+	mux.HandleFunc("POST /internal/v1/source/read", h.agentSourceRead)
 	return h.requestContext(mux)
 }
 

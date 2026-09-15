@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devpilot.dev/contracts/agent-run.v1.schema.json",
+  "title": "RepositoryAnalysisAgentRunV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "provider", "agent_run_id", "task_run_id", "commit_sha", "objective", "plan_context", "inspection_metadata", "source_broker_url", "source_capability", "prompt_version", "model", "reasoning_effort", "max_turns", "overall_timeout_seconds"],
+  "properties": {
+    "version": {"const": 1},
+    "provider": {"enum": ["openai", "ollama"]},
+    "agent_run_id": {"type": "string", "format": "uuid"},
+    "task_run_id": {"type": "string", "format": "uuid"},
+    "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
+    "plan_context": {"type": "object"},
+    "inspection_metadata": {"type": "object"},
+    "source_broker_url": {"type": "string"},
+    "source_capability": {"type": "string", "minLength": 40, "maxLength": 100},
+    "prompt_version": {"const": "repository-analysis-v2"},
+    "model": {"type": "string", "minLength": 1, "maxLength": 120},
+    "reasoning_effort": {"type": ["string", "null"], "enum": ["low", "medium", "high", null]},
+    "max_turns": {"type": "integer", "minimum": 1, "maximum": 20},
+    "overall_timeout_seconds": {"type": "integer", "minimum": 30, "maximum": 1800}
+  }
+}

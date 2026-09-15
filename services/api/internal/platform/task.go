@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/devpilot/devpilot/services/api/internal/agentclient"
 	"github.com/devpilot/devpilot/services/api/internal/authz"
 	"github.com/devpilot/devpilot/services/api/internal/config"
 	"github.com/devpilot/devpilot/services/api/internal/githubapp"
@@ -24,7 +25,8 @@ var validRunTransitions = map[string]map[string]bool{
 	"pending":           {"inspecting": true, "cancelled": true, "failed": true, "timed_out": true},
 	"inspecting":        {"awaiting_approval": true, "cancelled": true, "failed": true, "timed_out": true},
 	"awaiting_approval": {"approved": true, "rejected": true, "cancelled": true},
-	"approved":          {"cancelled": true},
+	"approved":          {"analyzing": true, "cancelled": true},
+	"analyzing":         {"awaiting_approval": true, "cancelled": true, "failed": true, "timed_out": true},
 }
 
 func ValidTaskRunTransition(from, to string) bool { return validRunTransitions[from][to] }
@@ -203,9 +205,17 @@ func (s *Service) TaskRun(ctx context.Context, actor Actor, id string) (TaskRun,
 		x.Plan = &p
 	}
 	var a Approval
-	e = s.db.QueryRow(ctx, `SELECT id,task_run_id,plan_revision_id,approval_type,revision,status,requested_at,decided_at,decided_by_user_id,decision_comment FROM approvals WHERE task_run_id=$1 ORDER BY revision DESC LIMIT 1`, id).Scan(&a.ID, &a.TaskRunID, &a.PlanRevisionID, &a.ApprovalType, &a.Revision, &a.Status, &a.RequestedAt, &a.DecidedAt, &a.DecidedByUserID, &a.DecisionComment)
+	e = s.db.QueryRow(ctx, `SELECT id,task_run_id,plan_revision_id,analysis_revision_id,approval_type,revision,status,requested_at,decided_at,decided_by_user_id,decision_comment FROM approvals WHERE task_run_id=$1 ORDER BY requested_at DESC LIMIT 1`, id).Scan(&a.ID, &a.TaskRunID, &a.PlanRevisionID, &a.AnalysisRevisionID, &a.ApprovalType, &a.Revision, &a.Status, &a.RequestedAt, &a.DecidedAt, &a.DecidedByUserID, &a.DecisionComment)
 	if e == nil {
 		x.Approval = &a
+	}
+	var ar AgentRun
+	e = s.db.QueryRow(ctx, `SELECT id,task_run_id,agent_type,status,provider,model,reasoning_effort,prompt_version,trace_id,failure_code,created_at,started_at,completed_at FROM agent_runs WHERE task_run_id=$1 ORDER BY created_at DESC LIMIT 1`, id).Scan(&ar.ID, &ar.TaskRunID, &ar.AgentType, &ar.Status, &ar.Provider, &ar.Model, &ar.ReasoningEffort, &ar.PromptVersion, &ar.TraceID, &ar.FailureCode, &ar.CreatedAt, &ar.StartedAt, &ar.CompletedAt)
+	if e == nil {
+		x.AgentRun = &ar
+	}
+	if analysis, analysisErr := s.Analysis(ctx, actor, id); analysisErr == nil {
+		x.Analysis = &analysis
 	}
 	return x, nil
 }
@@ -220,6 +230,7 @@ func (s *Service) CancelTaskRun(ctx context.Context, actor Actor, id, requestID 
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	var workspaceID *string
+	var agentRunID *string
 	var status, creator string
 	err = tx.QueryRow(ctx, `SELECT workspace_id,status,created_by_user_id FROM task_runs WHERE id=$1 AND organization_id=$2 FOR UPDATE`, id, actor.Organization.ID).Scan(&workspaceID, &status, &creator)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -242,6 +253,18 @@ func (s *Service) CancelTaskRun(ctx context.Context, actor Actor, id, requestID 
 		_, err = tx.Exec(ctx, `UPDATE outbox_events SET completed_at=now(),last_error_code='cancelled' WHERE aggregate_id=$1 AND completed_at IS NULL`, id)
 	}
 	if err == nil {
+		_ = tx.QueryRow(ctx, `UPDATE agent_runs SET status='cancelled',cancellation_requested_at=COALESCE(cancellation_requested_at,now()),completed_at=now() WHERE task_run_id=$1 AND status IN ('queued','running','failed') RETURNING id`, id).Scan(&agentRunID)
+	}
+	if err == nil && agentRunID != nil {
+		_, err = tx.Exec(ctx, `UPDATE agent_run_attempts SET status='cancelled',failure_code='cancelled_by_user',completed_at=now() WHERE agent_run_id=$1 AND status='running'`, *agentRunID)
+	}
+	if err == nil {
+		_, err = tx.Exec(ctx, `UPDATE source_capabilities SET revoked_at=COALESCE(revoked_at,now()) WHERE task_run_id=$1`, id)
+	}
+	if err == nil && agentRunID != nil {
+		_, err = tx.Exec(ctx, `INSERT INTO audit_events(id,organization_id,actor_user_id,event_type,resource_type,resource_id,request_id,metadata) VALUES($1,$2,NULL,'agent_run.cancelled','agent_run',$3,'system','{}')`, newID(), actor.Organization.ID, *agentRunID)
+	}
+	if err == nil {
 		err = insertAudit(ctx, tx, uuid.MustParse(actor.Organization.ID), uuid.MustParse(actor.User.ID), "task_run.cancel_requested", "task_run", uuid.MustParse(id), requestID, nil, s.now().UTC())
 	}
 	if err == nil {
@@ -256,6 +279,13 @@ func (s *Service) CancelTaskRun(ctx context.Context, actor Actor, id, requestID 
 	if workspaceID != nil {
 		_ = s.CancelWorkspace(ctx, actor, *workspaceID, requestID)
 	}
+	if agentRunID != nil && s.agent != nil {
+		go func() {
+			c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.agent.Cancel(c, *agentRunID)
+		}()
+	}
 	return nil
 }
 
@@ -269,7 +299,7 @@ func (s *Service) CancelTask(ctx context.Context, actor Actor, id, requestID str
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	var runID *string
-	err = tx.QueryRow(ctx, `UPDATE engineering_tasks SET status='cancelled',closed_at=now(),updated_at=now() WHERE id=$1 AND organization_id=$2 AND status='active' RETURNING (SELECT id FROM task_runs WHERE engineering_task_id=$1 AND status IN ('pending','inspecting','awaiting_approval','approved') ORDER BY run_number DESC LIMIT 1)`, id, actor.Organization.ID).Scan(&runID)
+	err = tx.QueryRow(ctx, `UPDATE engineering_tasks SET status='cancelled',closed_at=now(),updated_at=now() WHERE id=$1 AND organization_id=$2 AND status='active' RETURNING (SELECT id FROM task_runs WHERE engineering_task_id=$1 AND status IN ('pending','inspecting','awaiting_approval','approved','analyzing') ORDER BY run_number DESC LIMIT 1)`, id, actor.Organization.ID).Scan(&runID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
@@ -302,8 +332,8 @@ func (s *Service) DecideApproval(ctx context.Context, actor Actor, id, decision,
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	var a Approval
-	var creator, status string
-	err = tx.QueryRow(ctx, `SELECT a.id,a.task_run_id,a.plan_revision_id,a.approval_type,a.revision,a.status,a.requested_at,tr.created_by_user_id,tr.status FROM approvals a JOIN task_runs tr ON tr.id=a.task_run_id WHERE a.id=$1 AND a.organization_id=$2 FOR UPDATE`, id, actor.Organization.ID).Scan(&a.ID, &a.TaskRunID, &a.PlanRevisionID, &a.ApprovalType, &a.Revision, &a.Status, &a.RequestedAt, &creator, &status)
+	var creator, status, stage string
+	err = tx.QueryRow(ctx, `SELECT a.id,a.task_run_id,a.plan_revision_id,a.analysis_revision_id,a.approval_type,a.revision,a.status,a.requested_at,tr.created_by_user_id,tr.status,tr.current_stage FROM approvals a JOIN task_runs tr ON tr.id=a.task_run_id WHERE a.id=$1 AND a.organization_id=$2 FOR UPDATE`, id, actor.Organization.ID).Scan(&a.ID, &a.TaskRunID, &a.PlanRevisionID, &a.AnalysisRevisionID, &a.ApprovalType, &a.Revision, &a.Status, &a.RequestedAt, &creator, &status, &stage)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Approval{}, ErrNotFound
 	}
@@ -325,17 +355,27 @@ func (s *Service) DecideApproval(ctx context.Context, actor Actor, id, decision,
 	if err != nil {
 		return Approval{}, err
 	}
-	stage := "finished"
+	nextStage := "finished"
 	var completedAt any = now
 	if decision == "approved" {
-		stage = "approval"
+		nextStage = stage
 		completedAt = nil
 	}
-	_, err = tx.Exec(ctx, `UPDATE task_runs SET status=$2,current_stage=$3,completed_at=$4 WHERE id=$1 AND status='awaiting_approval'`, a.TaskRunID, decision, stage, completedAt)
+	_, err = tx.Exec(ctx, `UPDATE task_runs SET status=$2,current_stage=$3,completed_at=$4 WHERE id=$1 AND status='awaiting_approval'`, a.TaskRunID, decision, nextStage, completedAt)
 	if err != nil {
 		return Approval{}, err
 	}
-	err = insertAudit(ctx, tx, uuid.MustParse(actor.Organization.ID), uuid.MustParse(actor.User.ID), "approval."+decision, "approval", uuid.MustParse(id), requestID, mustJSON(map[string]any{"plan_revision_id": a.PlanRevisionID}), now)
+	if decision == "approved" && a.ApprovalType == "proceed_to_analysis" {
+		_, err = tx.Exec(ctx, `INSERT INTO outbox_events(id,organization_id,aggregate_type,aggregate_id,event_type,payload) VALUES($1,$2,'task_run',$3,$4,$5) ON CONFLICT(event_type,aggregate_id) DO NOTHING`, newID(), actor.Organization.ID, a.TaskRunID, startAnalysisEvent, mustJSON(map[string]any{"version": 1, "task_run_id": a.TaskRunID}))
+	}
+	meta := map[string]any{"approval_type": a.ApprovalType}
+	if a.PlanRevisionID != nil {
+		meta["plan_revision_id"] = *a.PlanRevisionID
+	}
+	if a.AnalysisRevisionID != nil {
+		meta["analysis_revision_id"] = *a.AnalysisRevisionID
+	}
+	err = insertAudit(ctx, tx, uuid.MustParse(actor.Organization.ID), uuid.MustParse(actor.User.ID), "approval."+decision, "approval", uuid.MustParse(id), requestID, mustJSON(meta), now)
 	if err != nil {
 		return Approval{}, err
 	}
@@ -355,7 +395,7 @@ func (s *Service) Approvals(ctx context.Context, actor Actor, runID string) ([]A
 	if !authz.Allowed(actor.Membership.Role, authz.ApprovalsRead) {
 		return nil, ErrForbidden
 	}
-	rows, err := s.db.Query(ctx, `SELECT a.id,a.task_run_id,a.plan_revision_id,a.approval_type,a.revision,a.status,a.requested_at,a.decided_at,a.decided_by_user_id,a.decision_comment FROM approvals a JOIN task_runs tr ON tr.id=a.task_run_id WHERE a.task_run_id=$1 AND tr.organization_id=$2 ORDER BY a.revision DESC`, runID, actor.Organization.ID)
+	rows, err := s.db.Query(ctx, `SELECT a.id,a.task_run_id,a.plan_revision_id,a.analysis_revision_id,a.approval_type,a.revision,a.status,a.requested_at,a.decided_at,a.decided_by_user_id,a.decision_comment FROM approvals a JOIN task_runs tr ON tr.id=a.task_run_id WHERE a.task_run_id=$1 AND tr.organization_id=$2 ORDER BY a.requested_at DESC`, runID, actor.Organization.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +403,7 @@ func (s *Service) Approvals(ctx context.Context, actor Actor, runID string) ([]A
 	result := []Approval{}
 	for rows.Next() {
 		var a Approval
-		if err = rows.Scan(&a.ID, &a.TaskRunID, &a.PlanRevisionID, &a.ApprovalType, &a.Revision, &a.Status, &a.RequestedAt, &a.DecidedAt, &a.DecidedByUserID, &a.DecisionComment); err != nil {
+		if err = rows.Scan(&a.ID, &a.TaskRunID, &a.PlanRevisionID, &a.AnalysisRevisionID, &a.ApprovalType, &a.Revision, &a.Status, &a.RequestedAt, &a.DecidedAt, &a.DecidedByUserID, &a.DecisionComment); err != nil {
 			return nil, err
 		}
 		result = append(result, a)
@@ -409,22 +449,40 @@ func (s *Service) ClaimOutbox(ctx context.Context, workerID string, stale time.D
 }
 
 func (s *Service) ProcessOutbox(ctx context.Context, e ClaimedEvent, cfg config.WorkerConfig) error {
-	if e.EventType != taskStartEvent {
+	if e.EventType != taskStartEvent && e.EventType != startAnalysisEvent && e.EventType != executeAgentEvent {
 		return s.failOutbox(ctx, e, cfg, "unknown_event", false)
 	}
 	var payload struct {
-		Version   int    `json:"version"`
-		TaskRunID string `json:"task_run_id"`
+		Version    int    `json:"version"`
+		TaskRunID  string `json:"task_run_id"`
+		AgentRunID string `json:"agent_run_id"`
 	}
-	if json.Unmarshal(e.Payload, &payload) != nil || payload.Version != 1 || payload.TaskRunID != e.AggregateID {
+	if json.Unmarshal(e.Payload, &payload) != nil || payload.Version != 1 {
 		return s.failOutbox(ctx, e, cfg, "malformed_payload", false)
 	}
-	err := s.processTaskRun(ctx, e.AggregateID, e.OrganizationID)
+	var err error
+	switch e.EventType {
+	case taskStartEvent:
+		if payload.TaskRunID != e.AggregateID {
+			return s.failOutbox(ctx, e, cfg, "malformed_payload", false)
+		}
+		err = s.processTaskRun(ctx, e.AggregateID, e.OrganizationID)
+	case startAnalysisEvent:
+		if payload.TaskRunID != e.AggregateID {
+			return s.failOutbox(ctx, e, cfg, "malformed_payload", false)
+		}
+		err = s.processStartAnalysis(ctx, e.AggregateID, e.OrganizationID)
+	case executeAgentEvent:
+		if payload.AgentRunID != e.AggregateID || payload.TaskRunID == "" {
+			return s.failOutbox(ctx, e, cfg, "malformed_payload", false)
+		}
+		err = s.processExecuteAgent(ctx, e.AggregateID, e.OrganizationID)
+	}
 	if err == nil {
 		_, err = s.db.Exec(ctx, `UPDATE outbox_events SET completed_at=now(),claimed_at=NULL,claimed_by=NULL,last_error_code=NULL WHERE id=$1`, e.ID)
 		return err
 	}
-	retryable := errors.Is(err, ErrUnavailable) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, githubapp.ErrUnavailable) || errors.Is(err, githubapp.ErrRateLimited)
+	retryable := errors.Is(err, ErrUnavailable) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, githubapp.ErrUnavailable) || errors.Is(err, githubapp.ErrRateLimited) || errors.Is(err, agentclient.ErrUnavailable) || errors.Is(err, agentclient.ErrRateLimited) || errors.Is(err, agentclient.ErrOllamaUnavailable) || errors.Is(err, agentclient.ErrModelTimeout)
 	return s.failOutbox(ctx, e, cfg, stableWorkerError(err), retryable)
 }
 
@@ -435,12 +493,30 @@ func (s *Service) failOutbox(ctx context.Context, e ClaimedEvent, cfg config.Wor
 			return err
 		}
 		defer tx.Rollback(ctx) //nolint:errcheck
+		auditRunID := e.AggregateID
 		_, err = tx.Exec(ctx, `UPDATE outbox_events SET completed_at=now(),claimed_at=NULL,claimed_by=NULL,last_error_code=$2 WHERE id=$1`, e.ID, code)
 		if err == nil {
-			_, err = tx.Exec(ctx, `UPDATE task_runs SET status='failed',current_stage='finished',failure_code=$2,completed_at=now() WHERE id=$1 AND status IN ('pending','inspecting')`, e.AggregateID, code)
+			if e.EventType == executeAgentEvent {
+				_ = tx.QueryRow(ctx, `SELECT task_run_id FROM agent_runs WHERE id=$1`, e.AggregateID).Scan(&auditRunID)
+				_, err = tx.Exec(ctx, `UPDATE agent_runs SET status='failed',failure_code=$2,completed_at=now() WHERE id=$1 AND status IN ('queued','running','failed')`, e.AggregateID, code)
+				if err == nil {
+					_, err = tx.Exec(ctx, `UPDATE agent_run_attempts SET status='failed',failure_code=$2,completed_at=now() WHERE agent_run_id=$1 AND status='running'`, e.AggregateID, code)
+				}
+				if err == nil {
+					_, err = tx.Exec(ctx, `UPDATE task_runs tr SET status='failed',current_stage='finished',failure_code=$2,completed_at=now() FROM agent_runs ar WHERE ar.id=$1 AND tr.id=ar.task_run_id AND tr.status='analyzing'`, e.AggregateID, code)
+				}
+				if err == nil {
+					_, err = tx.Exec(ctx, `UPDATE source_capabilities SET revoked_at=COALESCE(revoked_at,now()) WHERE agent_run_id=$1`, e.AggregateID)
+				}
+				if err == nil {
+					_, err = tx.Exec(ctx, `INSERT INTO audit_events(id,organization_id,actor_user_id,event_type,resource_type,resource_id,request_id,metadata) VALUES($1,$2,NULL,'agent_run.failed','agent_run',$3,'worker',$4)`, newID(), e.OrganizationID, e.AggregateID, mustJSON(map[string]any{"failure_code": code}))
+				}
+			} else {
+				_, err = tx.Exec(ctx, `UPDATE task_runs SET status='failed',current_stage='finished',failure_code=$2,completed_at=now() WHERE id=$1 AND status IN ('pending','inspecting','approved','analyzing')`, e.AggregateID, code)
+			}
 		}
 		if err == nil {
-			_, err = tx.Exec(ctx, `INSERT INTO audit_events(id,organization_id,actor_user_id,event_type,resource_type,resource_id,request_id,metadata) VALUES($1,$2,NULL,'task_run.failed','task_run',$3,'worker',$4)`, newID(), e.OrganizationID, e.AggregateID, mustJSON(map[string]any{"failure_code": code}))
+			_, err = tx.Exec(ctx, `INSERT INTO audit_events(id,organization_id,actor_user_id,event_type,resource_type,resource_id,request_id,metadata) VALUES($1,$2,NULL,'task_run.failed','task_run',$3,'worker',$4)`, newID(), e.OrganizationID, auditRunID, mustJSON(map[string]any{"failure_code": code}))
 		}
 		if err != nil {
 			return err
@@ -457,6 +533,54 @@ func (s *Service) failOutbox(ctx context.Context, e ClaimedEvent, cfg config.Wor
 }
 
 func stableWorkerError(err error) string {
+	if errors.Is(err, agentclient.ErrInvalidResult) {
+		return "invalid_agent_result"
+	}
+	if errors.Is(err, agentclient.ErrOllamaUnavailable) {
+		return "ollama_unavailable"
+	}
+	if errors.Is(err, agentclient.ErrOllamaModelUnavailable) {
+		return "ollama_model_unavailable"
+	}
+	if errors.Is(err, agentclient.ErrModelTimeout) {
+		return "model_timeout"
+	}
+	if errors.Is(err, agentclient.ErrModelInvalidOutput) {
+		return "model_invalid_output"
+	}
+	if errors.Is(err, agentclient.ErrModelContextExhausted) {
+		return "model_context_exhausted"
+	}
+	if errors.Is(err, agentclient.ErrModelMaxTurns) {
+		return "model_max_turns"
+	}
+	if errors.Is(err, agentclient.ErrToolTimeout) {
+		return "tool_timeout"
+	}
+	if errors.Is(err, agentclient.ErrOutputGuardrail) {
+		return "output_guardrail_rejected"
+	}
+	if errors.Is(err, agentclient.ErrProviderResponseInvalid) {
+		return "provider_response_invalid"
+	}
+	if errors.Is(err, agentclient.ErrEvidenceSelectionInvalid) {
+		return "evidence_selection_invalid"
+	}
+	if errors.Is(err, agentclient.ErrEvidenceSelectionEmpty) {
+		return "evidence_selection_empty"
+	}
+	if errors.Is(err, agentclient.ErrEvidenceBudgetExceeded) {
+		return "evidence_budget_exceeded"
+	}
+	if errors.Is(err, agentclient.ErrSourceBrokerTimeout) {
+		return "source_broker_timeout"
+	}
+	if errors.Is(err, agentclient.ErrSourceBrokerUnavailable) {
+		return "source_broker_unavailable"
+	}
+	if errors.Is(err, agentclient.ErrSourceBrokerInvalid) {
+		return "source_broker_invalid_response"
+	}
 	if errors.Is(err, githubapp.ErrRateLimited) {
 		return "github_rate_limited"
 	}

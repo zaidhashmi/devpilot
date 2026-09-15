@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/devpilot/devpilot/services/api/internal/agentclient"
 	"github.com/devpilot/devpilot/services/api/internal/authz"
 	"github.com/devpilot/devpilot/services/api/internal/githubapp"
 	"github.com/devpilot/devpilot/services/api/internal/runner"
@@ -24,11 +25,13 @@ import (
 var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
 
 type Service struct {
-	db         *pgxpool.Pool
-	sessionTTL time.Duration
-	now        func() time.Time
-	github     githubapp.Client
-	runner     runner.Client
+	db          *pgxpool.Pool
+	sessionTTL  time.Duration
+	now         func() time.Time
+	github      githubapp.Client
+	runner      runner.Client
+	agent       agentclient.Client
+	agentConfig AgentRuntimeConfig
 }
 
 func New(db *pgxpool.Pool, sessionTTL time.Duration) *Service {
@@ -37,6 +40,9 @@ func New(db *pgxpool.Pool, sessionTTL time.Duration) *Service {
 
 func (s *Service) SetGitHubClient(client githubapp.Client) { s.github = client }
 func (s *Service) SetRunnerClient(client runner.Client)    { s.runner = client }
+func (s *Service) SetAgentClient(client agentclient.Client, cfg AgentRuntimeConfig) {
+	s.agent, s.agentConfig = client, cfg
+}
 
 func (s *Service) Register(ctx context.Context, input Registration) (Session, error) {
 	normalizedEmail := normalizeEmail(input.Email)

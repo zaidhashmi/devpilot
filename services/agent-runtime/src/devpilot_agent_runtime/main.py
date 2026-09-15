@@ -5,8 +5,8 @@ import logging
 import signal
 
 from devpilot_agent_runtime.config import Settings
-from devpilot_agent_runtime.health import HealthServer
 from devpilot_agent_runtime.logging import configure_logging
+from devpilot_agent_runtime.server import RuntimeServer
 
 
 async def run() -> None:
@@ -19,7 +19,7 @@ async def run() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
-    health_server = HealthServer(settings.host, settings.port)
+    health_server = RuntimeServer(settings)
     await health_server.start()
     logger.info("agent runtime health server started")
 

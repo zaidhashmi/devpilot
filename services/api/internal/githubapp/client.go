@@ -60,6 +60,13 @@ type Client interface {
 type ContentClient interface {
 	ResolveCommit(context.Context, int64, int64, string, string, string) (string, error)
 	ArchiveURL(context.Context, int64, int64, string, string, string) (string, error)
+	ListFiles(context.Context, int64, int64, string, string, string) ([]SourceFile, error)
+	ReadFile(context.Context, int64, int64, string, string, string, string) ([]byte, error)
+}
+
+type SourceFile struct {
+	Path string
+	Size int64
 }
 
 type HTTPClient struct {
@@ -235,6 +242,71 @@ func (c *HTTPClient) ResolveCommit(ctx context.Context, installationID, reposito
 		return "", errors.New("github returned an invalid commit identifier")
 	}
 	return strings.ToLower(payload.SHA), nil
+}
+
+func (c *HTTPClient) ListFiles(ctx context.Context, installationID, repositoryID int64, owner, name, sha string) ([]SourceFile, error) {
+	token, err := c.scopedInstallationToken(ctx, installationID, []int64{repositoryID}, map[string]string{"contents": "read", "metadata": "read"})
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Truncated bool `json:"truncated"`
+		Tree      []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+			Size int64  `json:"size"`
+		} `json:"tree"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/git/trees/%s?recursive=1", url.PathEscape(owner), url.PathEscape(name), url.PathEscape(sha))
+	if err := c.request(ctx, http.MethodGet, path, token, nil, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Truncated {
+		return nil, fmt.Errorf("repository file index exceeds GitHub response limits: %w", ErrForbidden)
+	}
+	files := make([]SourceFile, 0, len(payload.Tree))
+	for _, item := range payload.Tree {
+		if item.Type == "blob" {
+			files = append(files, SourceFile{Path: item.Path, Size: item.Size})
+		}
+	}
+	return files, nil
+}
+
+func (c *HTTPClient) ReadFile(ctx context.Context, installationID, repositoryID int64, owner, name, sha, filePath string) ([]byte, error) {
+	token, err := c.scopedInstallationToken(ctx, installationID, []int64{repositoryID}, map[string]string{"contents": "read", "metadata": "read"})
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(filePath, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	path := fmt.Sprintf("/repos/%s/%s/contents/%s?ref=%s", url.PathEscape(owner), url.PathEscape(name), strings.Join(parts, "/"), url.QueryEscape(sha))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github.raw+json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: github source request failed", ErrUnavailable)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return nil, classify(resp.StatusCode, resp.Header)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 256<<10+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: github source response", ErrUnavailable)
+	}
+	if len(data) > 256<<10 {
+		return nil, ErrForbidden
+	}
+	return data, nil
 }
 
 func (c *HTTPClient) ArchiveURL(ctx context.Context, installationID, repositoryID int64, owner, name, sha string) (string, error) {

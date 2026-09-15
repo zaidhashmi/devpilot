@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
-  "openai-agents>=0.2,<1",
+  "openai-agents==0.22.0",
   "pydantic>=2.8,<3",
   "pydantic-settings>=2.4,<3",
 ]
@@ -25,6 +25,9 @@ dev = [
 
 [project.scripts]
 devpilot-agent-runtime = "devpilot_agent_runtime.main:main"
+devpilot-ollama-probe = "devpilot_agent_runtime.compat_probe:main"
+devpilot-adapter-probe = "devpilot_agent_runtime.adapter_probe:main"
+devpilot-evidence-protocol-probe = "devpilot_agent_runtime.protocol_probe:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/devpilot_agent_runtime"]
